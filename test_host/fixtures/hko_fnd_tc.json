@@ -1,0 +1,15 @@
+{
+  "generalSituation": "受偏東氣流影響，本週後期廣東沿岸有幾陣驟雨。",
+  "weatherForecast": [
+    {"forecastDate":"20260902","week":"星期三","forecastWeather":"大致多雲，間中有雨。","forecastMaxtemp":{"value":30,"unit":"C"},"forecastMintemp":{"value":26,"unit":"C"},"forecastMaxrh":{"value":95,"unit":"percent"},"forecastMinrh":{"value":75,"unit":"percent"},"ForecastIcon":63,"PSR":"中高"},
+    {"forecastDate":"20260903","week":"星期四","forecastWeather":"大致多雲，有幾陣微雨。","forecastMaxtemp":{"value":30,"unit":"C"},"forecastMintemp":{"value":25,"unit":"C"},"forecastMaxrh":{"value":95,"unit":"percent"},"forecastMinrh":{"value":70,"unit":"percent"},"ForecastIcon":62,"PSR":"中低"},
+    {"forecastDate":"20260904","week":"星期五","forecastWeather":"局部地區有雷暴。","forecastMaxtemp":{"value":29,"unit":"C"},"forecastMintemp":{"value":25,"unit":"C"},"forecastMaxrh":{"value":95,"unit":"percent"},"forecastMinrh":{"value":75,"unit":"percent"},"ForecastIcon":65,"PSR":"High"},
+    {"forecastDate":"20260905","week":"星期六","forecastWeather":"日間短暫時間有陽光。","forecastMaxtemp":{"value":31,"unit":"C"},"forecastMintemp":{"value":26,"unit":"C"},"forecastMaxrh":{"value":95,"unit":"percent"},"forecastMinrh":{"value":70,"unit":"percent"},"ForecastIcon":54,"PSR":"Medium Low"},
+    {"forecastDate":"20260906","week":"星期日","forecastWeather":"大致多雲。","forecastMaxtemp":{"value":32,"unit":"C"},"forecastMintemp":{"value":27,"unit":"C"},"forecastMaxrh":{"value":95,"unit":"percent"},"forecastMinrh":{"value":70,"unit":"percent"},"ForecastIcon":60,"PSR":"低"},
+    {"forecastDate":"20260907","week":"星期一","forecastWeather":"部分時間有陽光。","forecastMaxtemp":{"value":32,"unit":"C"},"forecastMintemp":{"value":27,"unit":"C"},"forecastMaxrh":{"value":95,"unit":"percent"},"forecastMinrh":{"value":65,"unit":"percent"},"ForecastIcon":51,"PSR":"中"},
+    {"forecastDate":"20260908","week":"星期二","forecastWeather":"天色良好。","forecastMaxtemp":{"value":32,"unit":"C"},"forecastMintemp":{"value":27,"unit":"C"},"forecastMaxrh":{"value":90,"unit":"percent"},"forecastMinrh":{"value":65,"unit":"percent"},"ForecastIcon":70,"PSR":"Low"},
+    {"forecastDate":"20260909","week":"星期三","forecastWeather":"有霧。","forecastMaxtemp":{"value":31,"unit":"C"},"forecastMintemp":{"value":27,"unit":"C"},"forecastMaxrh":{"value":90,"unit":"percent"},"forecastMinrh":{"value":70,"unit":"percent"},"ForecastIcon":83,"PSR":"中低"},
+    {"forecastDate":"20260910","week":"星期四","forecastWeather":"未知天氣描述。","forecastMaxtemp":{"value":31,"unit":"C"},"forecastMintemp":{"value":27,"unit":"C"},"forecastMaxrh":{"value":90,"unit":"percent"},"forecastMinrh":{"value":70,"unit":"percent"},"ForecastIcon":999,"PSR":""}
+  ],
+  "updateTime":"2026-09-02T00:00:00+08:00"
+}
