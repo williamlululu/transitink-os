@@ -9,6 +9,10 @@ and provides the normal route to rebuild or relink the firmware.
 For a release tagged `vX.Y.Z`, use the source archive attached automatically to
 the matching GitHub release or check out that exact tag from:
 
+<https://github.com/williamlululu/transitink-os>
+
+This repository preserves the history and attribution of its upstream source:
+
 <https://github.com/Zerie55699/transitink-os>
 
 The release tag must match `FIRMWARE_VERSION` in `include/ProductConfig.h`.

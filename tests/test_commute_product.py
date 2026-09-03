@@ -264,7 +264,7 @@ class CommuteProductTests(unittest.TestCase):
         config = read("include/ProductConfig.h")
         match = re.search(r'^#define FIRMWARE_VERSION "([^"]+)"$', config, re.M)
         self.assertIsNotNone(match)
-        self.assertEqual("1.2.1", match.group(1))
+        self.assertEqual("1.2.2", match.group(1))
         self.assertRegex(match.group(1), r"^\d+\.\d+\.\d+$")
 
 

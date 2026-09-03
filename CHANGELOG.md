@@ -2,6 +2,13 @@
 
 All notable user-visible changes to TransitInk OS will be documented here.
 
+## 1.2.2 - 2026-09-03
+
+- Changed the default firmware-update feed to the owner-controlled
+  `williamlululu/transitink-os` GitHub Pages deployment.
+- Includes the 1.2.1 KMB stop-specific ETA fix so 106 and 118 rows that omit
+  the redundant stop field inherit the stop ID from the request context.
+
 ## 1.2.1 - 2026-09-03
 
 - Fixed KMB 106 and 118 departures being discarded when KMB's stop-specific

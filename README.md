@@ -5,6 +5,12 @@ developed for the Zectrix Note 4 hardware profile. It displays four independentl
 configured widgets and includes an on-device Traditional Chinese and English
 settings portal.
 
+This owner-maintained repository preserves the history and attribution of the
+original [`Zerie55699/transitink-os`](https://github.com/Zerie55699/transitink-os)
+upstream project. Releases from this repository use an owner-controlled update
+feed so future settings-preserving OTA updates do not depend on upstream write
+access.
+
 ## Zectrix Note 4 demo
 
 ![Zectrix Note 4 running TransitInk OS](installer/assets/zectrix-note4-product.png)
@@ -211,7 +217,11 @@ merged image, settings-preserving OTA image, checksums, legal notices and a
 downloadable firmware bundle as GitHub Release assets, then deploys the same
 package through GitHub Pages. The
 canonical installer is
-[https://zerie55699.github.io/transitink-os/](https://zerie55699.github.io/transitink-os/).
+[https://williamlululu.github.io/transitink-os/](https://williamlululu.github.io/transitink-os/).
+
+See [Owner-controlled releases](docs/OWNER-RELEASES.md) for the release and
+GitHub Pages procedure, feed verification checks, and the one-time transition
+from builds that still reference the upstream update feed.
 
 ## Contributing
 
