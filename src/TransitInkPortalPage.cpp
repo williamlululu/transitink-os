@@ -108,6 +108,8 @@ kmb:'KMB',lwb:'Long Win',ctb:'Citybus',tfl:'London Buses (TfL)',mtr:'MTR',light_
 }};
 portalText['zh-HK'].catalog_intro='香港及倫敦的巴士與鐵路目錄已包含在韌體內，可離線搜尋。只有即時 ETA、找不到的新路線及手動更新需要網絡。';
 portalText['en-GB'].catalog_intro='Hong Kong and London bus and rail catalogues are built into the firmware for offline search. Only live ETA, newly added routes, and manual updates require a network connection.';
+portalText['zh-HK'].daily_wake_help='預設星期一至五 06:00–07:30 自動更新：06:40 前每 120 秒，06:40–07:10 每 30 秒，其後每 120 秒。結束後進入低耗電待機；其他時間按主頁鍵可開始 10 分鐘手動通勤更新。';
+portalText['en-GB'].daily_wake_help='The default Monday–Friday session runs 06:00–07:30: every 120 seconds before 06:40, every 30 seconds until 07:10, then every 120 seconds. It returns to low-power standby at the end; press Home at other times for a 10-minute manual commute session.';
 let portalLocale='zh-HK';
 function t(key,values={}){const template=portalText[portalLocale]?.[key]??portalText['zh-HK'][key]??key;return template.replace(/\{(\w+)\}/g,(_,name)=>values[name]??'')}
 function applyStaticTranslations(){if(typeof document==='undefined')return;document.documentElement?.setAttribute?.('lang',portalLocale);document.title=`${productName} ${t('device_settings')}`;document.querySelectorAll?.('[data-i18n]').forEach(node=>node.textContent=t(node.dataset.i18n));document.querySelectorAll?.('[data-i18n-aria-label]').forEach(node=>node.setAttribute('aria-label',t(node.dataset.i18nAriaLabel)))}

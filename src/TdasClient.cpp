@@ -1,5 +1,6 @@
 #include "TdasClient.h"
 
+#include "ProductConfig.h"
 #include "TransitTlsTrust.h"
 #include "core/CatalogCore.h"
 
@@ -62,7 +63,7 @@ bool TdasClient::postJson(const std::string& request,
         return false;
     }
     http.setAcceptEncoding("identity");
-    http.setUserAgent("TransitInk-OS/1.1.3");
+    http.setUserAgent("TransitInk-OS/" FIRMWARE_VERSION);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Accept", "application/json");
     const String requestString(request.c_str());

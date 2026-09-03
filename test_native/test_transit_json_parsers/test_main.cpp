@@ -147,7 +147,11 @@ void test_fixture_parses_exact_records_and_normalizes_two_arrivals() {
     assertRecord(records[0], "11", "O", kNowEpoch + 300, "渣甸山", "", false);
     TEST_ASSERT_EQUAL_STRING("Jardine's Lookout",
                              records[0].destinationLabelEn.c_str());
+    TEST_ASSERT_EQUAL_STRING("001145", records[0].stopId.c_str());
+    TEST_ASSERT_EQUAL_UINT16(1, records[0].stopSequence);
+    TEST_ASSERT_EQUAL_UINT8(1, records[0].etaSequence);
     TEST_ASSERT_EQUAL_STRING("", records[1].destinationLabelEn.c_str());
+    TEST_ASSERT_EQUAL_UINT8(2, records[1].etaSequence);
     assertRecord(records[1], "11", "O", kNowEpoch + 300, "渣甸山", "", false);
     assertRecord(records[2], "11", "O", kNowEpoch + 600, "渣甸山", "原定班次", false);
     assertRecord(records[3], "11", "O", 0, "渣甸山", "九巴時段", false);

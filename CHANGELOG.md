@@ -2,6 +2,20 @@
 
 All notable user-visible changes to TransitInk OS will be documented here.
 
+## 1.2.0 - 2026-09-03
+
+- Added a fixed Traditional Chinese weekday commute dashboard comparing
+  106→8P with regular route 118 for arrival at Yue Wan Estate by 07:25.
+- Added exact stop/direction/service matching for the selected Citybus and KMB
+  feeds, conservative joint-operator ETA de-duplication, transfer-margin and
+  missed-first-bus planning, and explicit stale/partial/unavailable states.
+- Added weekday normal, rapid and recovery polling phases, a ten-minute manual
+  Home-button session, weather caching, modem power saving, light-sleep standby
+  and battery telemetry without introducing deep sleep.
+- Added a compact generated Chinese glyph subset, five deterministic 400×300
+  visual scenarios, schedule/route/failure regression tests, and supervised
+  first-flash and recovery documentation.
+
 ## 1.1.3 - 2026-07-28
 
 - Added a display-font setting with Noto Sans as the default and GNU Unifont as

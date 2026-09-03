@@ -24,11 +24,12 @@ bool etaStreamUsable(const CommuteEtaSnapshot& snapshot,
 
 CommuteAssessment assess(const CommuteTripEstimate& trip,
                          int64_t targetEpoch,
-                         const CommutePlannerSettings& settings) {
+                         const CommutePlannerSettings& settings,
+                         bool recoveryMode) {
     if (!trip.valid || targetEpoch <= 0) {
         return CommuteAssessment::Unavailable;
     }
-    if (trip.arrivalEpoch <=
+    if (!recoveryMode && trip.arrivalEpoch <=
         targetEpoch - static_cast<int64_t>(settings.safeArrivalMarginMinutes) *
                           kSecondsPerMinute) {
         return CommuteAssessment::Safe;
@@ -41,7 +42,8 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
                                 const CommuteEtaSnapshot& bus8p,
                                 int64_t nowEpoch,
                                 int64_t targetEpoch,
-                                const CommutePlannerSettings& settings) {
+                                const CommutePlannerSettings& settings,
+                                bool recoveryMode) {
     CommuteRouteEstimate result;
     result.stale = bus106.stale || bus8p.stale;
     if (!etaStreamUsable(bus106, nowEpoch, settings) ||
@@ -109,14 +111,16 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
             break;
         }
     }
-    result.assessment = assess(result.primary, targetEpoch, settings);
+    result.assessment =
+        assess(result.primary, targetEpoch, settings, recoveryMode);
     return result;
 }
 
 CommuteRouteEstimate planRouteB(const CommuteEtaSnapshot& bus118,
                                 int64_t nowEpoch,
                                 int64_t targetEpoch,
-                                const CommutePlannerSettings& settings) {
+                                const CommutePlannerSettings& settings,
+                                bool recoveryMode) {
     CommuteRouteEstimate result;
     result.stale = bus118.stale;
     if (!etaStreamUsable(bus118, nowEpoch, settings)) return result;
@@ -147,7 +151,8 @@ CommuteRouteEstimate planRouteB(const CommuteEtaSnapshot& bus118,
             break;
         }
     }
-    result.assessment = assess(result.primary, targetEpoch, settings);
+    result.assessment =
+        assess(result.primary, targetEpoch, settings, recoveryMode);
     return result;
 }
 
@@ -166,6 +171,27 @@ bool betterRecommendation(const CommuteRouteEstimate& candidate,
     return candidate.primary.arrivalEpoch < current.primary.arrivalEpoch;
 }
 
+CommuteDataQuality dataQuality(const CommuteDashboardSnapshot& dashboard,
+                               int64_t nowEpoch,
+                               const CommutePlannerSettings& settings) {
+    bool anyUsable = false;
+    bool allUsable = true;
+    bool anyPartial = false;
+    bool anyStale = false;
+    for (const auto& eta : dashboard.etas) {
+        const bool usable = etaStreamUsable(eta, nowEpoch, settings);
+        anyUsable = anyUsable || usable;
+        allUsable = allUsable && usable;
+        anyPartial = anyPartial || eta.partial;
+        anyStale = anyStale || eta.stale || (eta.count > 0 && !usable);
+    }
+    if (!anyUsable) return CommuteDataQuality::Unavailable;
+    if (anyPartial) return CommuteDataQuality::Partial;
+    if (anyStale) return CommuteDataQuality::Stale;
+    if (!allUsable) return CommuteDataQuality::Partial;
+    return CommuteDataQuality::Fresh;
+}
+
 }  // namespace
 
 CommuteEtaSnapshot& commuteEta(CommuteDashboardSnapshot& dashboard,
@@ -182,18 +208,26 @@ void planCommuteDashboard(CommuteDashboardSnapshot& dashboard,
                           int64_t nowEpoch,
                           int64_t targetEpoch,
                           bool weekday,
-                          const CommutePlannerSettings& settings) {
+                          const CommutePlannerSettings& settings,
+                          CommuteSessionMode sessionMode) {
     dashboard.targetEpoch = targetEpoch;
     dashboard.weekday = weekday;
+    dashboard.sessionMode = sessionMode;
+    const bool recoveryMode =
+        sessionMode == CommuteSessionMode::AutomaticRecovery;
     dashboard.routeA = planRouteA(
         commuteEta(dashboard, CommuteEtaKind::Bus106),
         commuteEta(dashboard, CommuteEtaKind::Bus8P), nowEpoch, targetEpoch,
-        settings);
+        settings, recoveryMode);
     dashboard.routeB = planRouteB(
         commuteEta(dashboard, CommuteEtaKind::Bus118), nowEpoch, targetEpoch,
-        settings);
+        settings, recoveryMode);
+    dashboard.dataQuality = dataQuality(dashboard, nowEpoch, settings);
     dashboard.recommendation = CommuteChoice::None;
-    if (!weekday || nowEpoch <= 0 || targetEpoch <= 0) return;
+    const bool recommendationEnabled =
+        isActiveCommuteSession(sessionMode) &&
+        (weekday || sessionMode == CommuteSessionMode::Manual);
+    if (!recommendationEnabled || nowEpoch <= 0 || targetEpoch <= 0) return;
 
     CommuteRouteEstimate best;
     if (betterRecommendation(dashboard.routeA, best)) {
@@ -212,7 +246,8 @@ uint16_t calibratedJourneyMinutes(uint16_t rawMinutes,
         (static_cast<uint32_t>(rawMinutes) * scalePercent + 50U) / 100U;
     const int32_t adjusted =
         static_cast<int32_t>(scaled) + static_cast<int32_t>(offsetMinutes);
-    return static_cast<uint16_t>(std::clamp<int32_t>(adjusted, 1, 999));
+    return static_cast<uint16_t>(std::min<int32_t>(999,
+                                                   std::max<int32_t>(1, adjusted)));
 }
 
 }  // namespace transitink

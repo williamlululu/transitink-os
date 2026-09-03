@@ -51,6 +51,9 @@ struct BusEtaRecord {
     std::string destinationLabelTc, remarkTc;
     bool cancelled = false;
     std::string destinationLabelEn{}, remarkEn{};
+    std::string stopId{};
+    uint16_t stopSequence = 0;
+    uint8_t etaSequence = 0;
 };
 
 struct GmbEtaRecord {

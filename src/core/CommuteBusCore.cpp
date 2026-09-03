@@ -1,7 +1,10 @@
 #include "core/CommuteBusCore.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <utility>
+
+#include "ProductConfig.h"
 
 namespace transitink {
 namespace {
@@ -24,11 +27,12 @@ BusWidgetConfig citybusConfig(const char* route,
 // Stop identifiers and directions are from the official Citybus/KMB route-stop
 // feeds. 106 and 118 are joint routes, so both operators must be queried.
 const std::array<CommuteBusFeedConfig, kCommuteEtaStreamCount> kConfigs = {{
-    {citybusConfig("106", "001533", "紅磡街市"),
-     "997CCAB996935BD7", "O"},
-    {citybusConfig("8P", "001213", "維多利亞公園"), nullptr, nullptr},
-    {citybusConfig("118", "001476", "紅磡海底隧道收費廣場"),
-     "C564EDC91AFD7D04", "O"},
+    {citybusConfig("106", "001533", "紅磡街市"), 14, 44, "001224",
+     "997CCAB996935BD7", "O", "1", 14},
+    {citybusConfig("8P", "001213", "維多利亞公園"), 5, 9, "001224",
+     nullptr, nullptr, nullptr, 0},
+    {citybusConfig("118", "001476", "紅磡海底隧道收費廣場"), 16, 27,
+     "001224", "C564EDC91AFD7D04", "O", "1", 16},
 }};
 
 bool recordMatches(const BusEtaRecord& record,
@@ -37,12 +41,42 @@ bool recordMatches(const BusEtaRecord& record,
         return false;
     }
     if (record.operatorId == BusOperator::Citybus) {
-        return record.directionId == config.citybus.directionId;
+        return record.directionId == config.citybus.directionId &&
+               // The Citybus ETA schema does not expose service_type. The
+               // route-stop sequence below binds the row to service variant 1.
+               (record.serviceType.empty() ||
+                record.serviceType == config.citybus.serviceType) &&
+               record.stopId == config.citybus.stopId &&
+               record.stopSequence == config.citybusBoardingSequence;
     }
     if (record.operatorId == BusOperator::Kmb && config.kmbStopId != nullptr) {
-        return record.directionId == config.kmbDirectionId;
+        return record.directionId == config.kmbDirectionId &&
+               record.serviceType == config.kmbServiceType &&
+               record.stopId == config.kmbStopId &&
+               record.stopSequence == config.kmbBoardingSequence;
     }
     return false;
+}
+
+struct MatchedEta {
+    int64_t epoch = 0;
+    BusOperator operatorId = BusOperator::Citybus;
+    uint8_t etaSequence = 0;
+};
+
+bool equivalentJointEta(const MatchedEta& existing,
+                        const BusEtaRecord& candidate,
+                        bool jointRoute) {
+    if (existing.epoch == candidate.eventEpoch) return true;
+    if (!jointRoute || existing.operatorId == candidate.operatorId ||
+        existing.etaSequence == 0 || candidate.etaSequence == 0 ||
+        existing.etaSequence != candidate.etaSequence) {
+        return false;
+    }
+    const int64_t difference = existing.epoch > candidate.eventEpoch
+                                   ? existing.epoch - candidate.eventEpoch
+                                   : candidate.eventEpoch - existing.epoch;
+    return difference <= COMMUTE_JOINT_ETA_DEDUP_SECONDS;
 }
 
 void removeExpired(CommuteEtaSnapshot& snapshot, int64_t nowEpoch) {
@@ -88,8 +122,8 @@ void applyCommuteEtaRecords(CommuteDashboardSnapshot& dashboard,
     }
 
     const auto& config = kConfigs[commuteEtaIndex(kind)];
-    std::vector<int64_t> epochs;
-    epochs.reserve(records.size());
+    std::vector<MatchedEta> matched;
+    matched.reserve(records.size());
     for (const auto& record : records) {
         if (!recordMatches(record, config) || record.eventEpoch <= nowEpoch) {
             continue;
@@ -97,8 +131,23 @@ void applyCommuteEtaRecords(CommuteDashboardSnapshot& dashboard,
         // An ETA more than six hours away is not useful for this morning
         // decision and is more likely malformed or for a later service day.
         if (record.eventEpoch > nowEpoch + 6 * 60 * 60) continue;
-        epochs.push_back(record.eventEpoch);
+        auto duplicate = std::find_if(
+            matched.begin(), matched.end(), [&](const MatchedEta& existing) {
+                return equivalentJointEta(existing, record,
+                                          config.kmbStopId != nullptr);
+            });
+        if (duplicate == matched.end()) {
+            matched.push_back(
+                {record.eventEpoch, record.operatorId, record.etaSequence});
+        } else {
+            // When joint-operator feeds differ slightly, retain the later ETA
+            // so the commute recommendation remains conservative.
+            duplicate->epoch = std::max(duplicate->epoch, record.eventEpoch);
+        }
     }
+    std::vector<int64_t> epochs;
+    epochs.reserve(matched.size());
+    for (const auto& eta : matched) epochs.push_back(eta.epoch);
     std::sort(epochs.begin(), epochs.end());
     epochs.erase(std::unique(epochs.begin(), epochs.end()), epochs.end());
 

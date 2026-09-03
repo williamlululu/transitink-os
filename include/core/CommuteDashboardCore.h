@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <string>
 
+#include "core/CommuteSessionCore.h"
+
 namespace transitink {
 
 constexpr std::size_t kCommuteEtaStreamCount = 3;
@@ -28,6 +30,13 @@ enum class CommuteAssessment : uint8_t {
     Safe,
     Tight,
     Late,
+};
+
+enum class CommuteDataQuality : uint8_t {
+    Fresh,
+    Partial,
+    Stale,
+    Unavailable,
 };
 
 struct CommuteEtaSnapshot {
@@ -98,6 +107,8 @@ struct CommuteDashboardSnapshot {
     int64_t targetEpoch = 0;
     int64_t updatedAtEpoch = 0;
     bool weekday = false;
+    CommuteSessionMode sessionMode = CommuteSessionMode::Standby;
+    CommuteDataQuality dataQuality = CommuteDataQuality::Unavailable;
 };
 
 struct ForecastDay {
@@ -136,7 +147,9 @@ void planCommuteDashboard(CommuteDashboardSnapshot& dashboard,
                           int64_t nowEpoch,
                           int64_t targetEpoch,
                           bool weekday,
-                          const CommutePlannerSettings& settings = {});
+                          const CommutePlannerSettings& settings = {},
+                          CommuteSessionMode sessionMode =
+                              CommuteSessionMode::AutomaticNormal);
 
 uint16_t calibratedJourneyMinutes(uint16_t rawMinutes,
                                   uint8_t scalePercent,

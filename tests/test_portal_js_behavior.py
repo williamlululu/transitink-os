@@ -1,10 +1,25 @@
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_node(source):
+    """Run a portal harness without exceeding Windows' command-line limit."""
+    with tempfile.TemporaryDirectory(prefix="transitink-portal-test-") as directory:
+        script_path = Path(directory) / "portal-test.js"
+        script_path.write_text(source, encoding="utf-8")
+        return subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
 
 
 class PortalJavaScriptBehaviorTests(unittest.TestCase):
@@ -37,13 +52,7 @@ const payload=collectConfig();
 if(payload.schema_version!==3||payload.widgets.length!==12)throw new Error('沒有輸出三頁設定');
 process.stdout.write('ok');
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -97,12 +106,8 @@ if(catalogState[0].busStops.items[0]?.id!=='490012280A')throw new Error('Embedde
   if(catalogState[0].railDirections.items[0]?.id!=='inbound')throw new Error('Embedded London rail direction was not listed');
   process.stdout.write('ok');
 """
-        completed = subprocess.run(
-            ["node", "-e", "global.location={pathname:'/'};" + script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
+        completed = run_node(
+            "global.location={pathname:'/'};" + script + harness
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
@@ -143,13 +148,7 @@ setPortalLocale('zh-HK');
 if(!element('widget_cards').innerHTML.includes('小工具類型')||collectConfig().ui_locale!=='zh-HK')throw new Error('Traditional Chinese locale was not restored');
 process.stdout.write('ok');
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -168,12 +167,8 @@ global.fetch=(path,options)=>{captured={path,options};return Promise.resolve({ok
   process.stdout.write('ok');
 })().catch(error=>{console.error(error);process.exitCode=1});
 """
-        completed = subprocess.run(
-            ["node", "-e", "global.location={pathname:'/SESSION123'};" + script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
+        completed = run_node(
+            "global.location={pathname:'/SESSION123'};" + script + harness
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
@@ -215,13 +210,7 @@ global.fetch=(path)=>{
   process.stdout.write('ok');
 })().catch(error=>{console.error(error.message);process.exit(1)});
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -244,13 +233,7 @@ if(markup.includes('<img src=x'))throw new Error('目錄字串成為可執行 HT
 if(!markup.includes('&lt;img src=x onerror=alert(1)&gt;'))throw new Error('目錄字串沒有被 escaping');
 process.stdout.write('ok');
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -282,13 +265,7 @@ if(!element('bus_route_0_help').textContent.includes('設定'))throw new Error('
 if(validateWidgetDrafts()||firstWidgetValidation?.fieldId!=='bus_direction_0')throw new Error('缺漏路線沒有要求更新後選方向');
 process.stdout.write('ok');
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -337,13 +314,7 @@ global.fetch=(path,options)=>{
   process.stdout.write('ok');
 })().catch(error=>{console.error(error.message);process.exit(1)});
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -419,13 +390,7 @@ global.fetch=async(path,options)=>{
   process.stdout.write('ok');
 })().catch(error=>{console.error(error.message);process.exit(1)});
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -465,13 +430,7 @@ global.fetch=async path=>{
   process.stdout.write('ok');
 })().catch(error=>{console.error(error.message);process.exit(1)});
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -530,13 +489,7 @@ global.fetch=(path,options)=>{
   process.stdout.write('ok');
 })().catch(error=>{console.error(error.message);process.exit(1)});
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -574,13 +527,7 @@ global.fetch=(path)=>{
   process.stdout.write('ok');
 })().catch(error=>{console.error(error.message);process.exit(1)});
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -610,13 +557,7 @@ portalLocale='zh-HK';
 if(localizedLabel({label_tc:'中環',label_en:'Central'})!=='中環')throw new Error('繁中名稱未被選用');
 process.stdout.write('ok');
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 
@@ -638,13 +579,7 @@ const tfl=busDirectionItems('tfl','24')[0];
 if(localizedLabel(tfl)!=='Pimlico to Hampstead Heath'||tfl.label_en.includes('service')||tfl.label_en.includes('490012280A'))throw new Error('倫敦巴士方向顯示內部服務或站點 ID');
 process.stdout.write('ok');
 """
-        completed = subprocess.run(
-            ["node", "-e", script + harness],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        completed = run_node(script + harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "ok")
 

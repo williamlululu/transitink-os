@@ -270,6 +270,9 @@ bool parseEtaJson(const char* json,
     filter["data"][0]["route"] = true;
     filter["data"][0]["dir"] = true;
     filter["data"][0]["service_type"] = true;
+    filter["data"][0]["stop"] = true;
+    filter["data"][0]["seq"] = true;
+    filter["data"][0]["eta_seq"] = true;
     filter["data"][0]["eta"] = true;
     filter["data"][0]["dest_tc"] = true;
     filter["data"][0]["dest_en"] = true;
@@ -297,6 +300,9 @@ bool parseEtaJson(const char* json,
         std::string destinationEn;
         std::string remarkEn;
         std::string serviceType;
+        std::string stopId;
+        int stopSequence = 0;
+        int etaSequence = 0;
         if (!readRequiredString(item["co"], company) ||
             !readRequiredString(item["route"], route) ||
             !readRequiredString(item["dir"], direction) ||
@@ -305,6 +311,13 @@ bool parseEtaJson(const char* json,
             !readOptionalString(item, "rmk_tc", remark) ||
             !readOptionalString(item, "dest_en", destinationEn) ||
             !readOptionalString(item, "rmk_en", remarkEn) ||
+            !readOptionalString(item, "stop", stopId) ||
+            (!item["seq"].isNull() &&
+             (!readRequiredInt(item["seq"], stopSequence) ||
+              stopSequence <= 0 || stopSequence > UINT16_MAX)) ||
+            (!item["eta_seq"].isNull() &&
+             (!readRequiredInt(item["eta_seq"], etaSequence) ||
+              etaSequence <= 0 || etaSequence > UINT8_MAX)) ||
             (hasServiceType &&
              !readServiceType(item["service_type"], serviceType)) ||
             company != expectedCompany) {
@@ -320,6 +333,9 @@ bool parseEtaJson(const char* json,
         record.remarkTc = std::move(remark);
         record.destinationLabelEn = std::move(destinationEn);
         record.remarkEn = std::move(remarkEn);
+        record.stopId = std::move(stopId);
+        record.stopSequence = static_cast<uint16_t>(stopSequence);
+        record.etaSequence = static_cast<uint8_t>(etaSequence);
         record.cancelled = record.remarkTc.find("取消") != std::string::npos;
         records.push_back(std::move(record));
     }

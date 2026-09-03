@@ -172,6 +172,27 @@ mapping.
 See [Adding hardware](docs/ADDING_HARDWARE.md) for the supported extension path.
 Do not assume the Zectrix pinout or flash layout is safe for another board.
 
+## Yue Wan weekday commute dashboard
+
+Version 1.2.0 configures the Zectrix Note 4 as a focused weekday decision
+display for reaching Yue Wan Estate by 07:25. It compares only a four-minute
+walk followed by 106→8P and a thirteen-minute walk followed by regular 118.
+Boarding ETAs come from the official Citybus/KMB feeds and are combined with
+explicit conservative ride, boarding and transfer assumptions; ETA rows are not
+treated as observed end-to-end journey times.
+
+The default Hong Kong schedule refreshes immediately at 06:00, polls every 120
+seconds until 06:40, every 30 seconds until 07:10, and every 120 seconds in
+late/recovery mode until a final 07:30 update. There is no automatic weekend
+session. Home starts a ten-minute manual session outside the window. Standby
+uses light sleep rather than deep sleep, keeps the last e-paper image, and stops
+periodic network traffic. Weather is cached for at least fifteen minutes, while
+unchanged e-paper regions are not refreshed.
+
+See [Morning handoff](docs/MORNING-HANDOFF.md),
+[first-flash checklist](docs/FIRST-FLASH-CHECKLIST.md), and
+[recovery plan](docs/RECOVERY-PLAN.md) before physical testing.
+
 ## Web installer and releases
 
 The browser installer is maintained in [`installer/`](installer/) so its source,

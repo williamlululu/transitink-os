@@ -114,7 +114,7 @@ class ProjectStructureTests(unittest.TestCase):
         self.assertIn('#define FIRMWARE_PRODUCT_NAME "TransitInk OS"', config)
         self.assertIn('#define FIRMWARE_SHORT_NAME "TransitInk"', config)
         self.assertIn("#define CONFIG_AP_PREFIX FIRMWARE_SHORT_NAME", config)
-        self.assertIn('#define FIRMWARE_VERSION "1.1.3"', config)
+        self.assertIn('#define FIRMWARE_VERSION "1.2.0"', config)
         self.assertNotIn("Bus ETA Note 4", config + readme)
         self.assertNotIn("巴士 ETA", config + readme)
         self.assertTrue(readme.startswith("# TransitInk OS"))
@@ -425,7 +425,7 @@ class ProjectStructureTests(unittest.TestCase):
 
         config = read_text("include/ProductConfig.h")
         profile_test = read_text("test_host/test_board_profile.cpp")
-        self.assertIn('#define FIRMWARE_VERSION "1.1.3"', config)
+        self.assertIn('#define FIRMWARE_VERSION "1.2.0"', config)
         self.assertIn("battery.adcPin == 4", profile_test)
         self.assertIn("battery.sensePowerPin == 17", profile_test)
         self.assertIn("battery.chargeDetectPin == 2", profile_test)
@@ -913,8 +913,16 @@ class ProjectStructureTests(unittest.TestCase):
         self.assertIn("#define SLEEP_WAKE_DEFAULT_MINUTES 5", config)
         self.assertIn("#define SLEEP_MAINTENANCE_DEFAULT_HOURS 12", config)
         self.assertIn("#define SCHEDULED_WAKE_ENABLED_DEFAULT 1", config)
-        self.assertIn("#define SCHEDULED_WAKE_START_DEFAULT_MINUTES 360", config)
-        self.assertIn("#define SCHEDULED_WAKE_END_DEFAULT_MINUTES 450", config)
+        self.assertIn(
+            "#define SCHEDULED_WAKE_START_DEFAULT_MINUTES "
+            "COMMUTE_AUTOMATIC_START_MINUTES",
+            config,
+        )
+        self.assertIn(
+            "#define SCHEDULED_WAKE_END_DEFAULT_MINUTES "
+            "COMMUTE_AUTOMATIC_END_MINUTES",
+            config,
+        )
 
         app_config = read_text("include/AppConfig.h")
         self.assertIn("bool sleepEnabled = SLEEP_ENABLED_DEFAULT", app_config)
@@ -983,7 +991,7 @@ class ProjectStructureTests(unittest.TestCase):
         self.assertIn("bool sleepMaintenanceWake = false", main)
         self.assertIn("void enterSleepMode(const char* reason)", main)
         self.assertIn("void configureLightSleepWakeup()", main)
-        self.assertIn("void returnFromLightSleep()", main)
+        self.assertIn("void returnFromLightSleep(bool manualWake)", main)
         self.assertIn("void performLightSleepMaintenance()", main)
         self.assertIn("RTC_NOINIT_ATTR uint32_t sleepResumeMarker", main)
         self.assertIn("RTC_NOINIT_ATTR uint32_t sleepResumeMarkerInverse", main)
@@ -1023,7 +1031,8 @@ class ProjectStructureTests(unittest.TestCase):
         self.assertIn("wakeCause == ESP_SLEEP_WAKEUP_TIMER", main)
         self.assertIn("wakeCause == ESP_SLEEP_WAKEUP_GPIO", main)
         self.assertIn("waitForHomeRelease();", main)
-        self.assertIn("returnFromLightSleep();", main)
+        self.assertIn("returnFromLightSleep(true);", main)
+        self.assertIn("returnFromLightSleep(false);", main)
         self.assertIn("performLightSleepMaintenance();", main)
         self.assertIn("refreshWeatherNow();", main)
         self.assertIn("refreshAllWidgetsNow();", main)
@@ -1061,7 +1070,9 @@ class ProjectStructureTests(unittest.TestCase):
         self.assertNotIn("widgetScheduler", maintenance)
         self.assertNotIn("einkDisplay.showSleep", maintenance)
         self.assertNotIn("einkDisplay.begin", maintenance)
-        home_wake = cpp_function_body(main, "void returnFromLightSleep()")
+        home_wake = cpp_function_body(
+            main, "void returnFromLightSleep(bool manualWake)"
+        )
         self.assertIn("startHomeWakeRefresh();", home_wake)
         self.assertNotIn("connectWifi(deviceConfig)", home_wake)
         self.assertNotIn("syncTimeAndWeatherBeforeDashboard", home_wake)
@@ -1349,13 +1360,22 @@ class ProjectStructureTests(unittest.TestCase):
             hashlib.sha256(font_path.read_bytes()).hexdigest(),
             generator.DEFAULT_FONT_SHA256,
         )
-        self.assertIn("SIL OPEN FONT LICENSE Version 1.1", licence_path.read_text())
+        self.assertIn(
+            "SIL OPEN FONT LICENSE Version 1.1",
+            licence_path.read_text(encoding="utf-8"),
+        )
         self.assertRegex(
-            upstream_notice_path.read_text(),
+            upstream_notice_path.read_text(encoding="utf-8"),
             r"copyright\s+is held by Adobe",
         )
-        self.assertIn(generator.DEFAULT_FONT_SHA256, source_path.read_text())
-        self.assertIn("src/generated/HkGlyphFontData.cpp", notices_path.read_text())
+        self.assertIn(
+            generator.DEFAULT_FONT_SHA256,
+            source_path.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "src/generated/HkGlyphFontData.cpp",
+            notices_path.read_text(encoding="utf-8"),
+        )
 
         unifont_path = ROOT / "third_party/fonts/unifont/unifont-17.0.04.bdf.gz"
         unifont_licence_path = ROOT / "third_party/fonts/unifont/OFL-1.1.txt"
@@ -1371,15 +1391,15 @@ class ProjectStructureTests(unittest.TestCase):
         )
         self.assertIn(
             "SIL OPEN FONT LICENSE Version 1.1",
-            unifont_licence_path.read_text(),
+            unifont_licence_path.read_text(encoding="utf-8"),
         )
         self.assertIn(
             generator.DEFAULT_UNIFONT_SHA256,
-            unifont_source_path.read_text(),
+            unifont_source_path.read_text(encoding="utf-8"),
         )
         self.assertIn(
             "src/generated/UnifontGlyphFontData.cpp",
-            notices_path.read_text(),
+            notices_path.read_text(encoding="utf-8"),
         )
 
     def test_glyph_generator_rejects_non_bmp_codepoints(self):
@@ -1476,11 +1496,12 @@ class ProjectStructureTests(unittest.TestCase):
 
         display = read_text("src/EInkDisplay.cpp")
         for label in (
-            "TAKE ROUTE A",
-            "TAKE ROUTE B",
-            "MISS FIRST",
-            "RAIN POSSIBLE",
-            "07:25 IS UNLIKELY",
+            "建議",
+            "106→8P",
+            "118",
+            "錯過首班",
+            "今日有雨機會",
+            "警告：預計將會遲到",
         ):
             self.assertIn(label, display)
         self.assertIn("refreshCommuteBody", display)
