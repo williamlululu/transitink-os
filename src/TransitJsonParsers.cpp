@@ -333,7 +333,12 @@ bool parseEtaJson(const char* json,
         record.remarkTc = std::move(remark);
         record.destinationLabelEn = std::move(destinationEn);
         record.remarkEn = std::move(remarkEn);
-        record.stopId = std::move(stopId);
+        // KMB's stop-scoped ETA endpoint omits `stop` from each row. The
+        // request path still unambiguously identifies the stop, so retain the
+        // caller-supplied stop ID when the payload does not repeat it.
+        record.stopId = stopId.empty() && hasServiceType
+                            ? config.stopId
+                            : std::move(stopId);
         record.stopSequence = static_cast<uint16_t>(stopSequence);
         record.etaSequence = static_cast<uint8_t>(etaSequence);
         record.cancelled = record.remarkTc.find("取消") != std::string::npos;

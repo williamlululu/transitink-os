@@ -401,6 +401,7 @@ bool KmbClient::fetchStopEtaRecords(
 
     transitink::BusWidgetConfig parserConfig;
     parserConfig.operatorId = transitink::BusOperator::Kmb;
+    parserConfig.stopId = stopId.c_str();
     std::string parserError;
     if (!parseKmbEtaJson(body.c_str(), parserConfig, records, parserError)) {
         records.clear();

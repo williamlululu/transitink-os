@@ -2,6 +2,12 @@
 
 All notable user-visible changes to TransitInk OS will be documented here.
 
+## 1.2.1 - 2026-09-03
+
+- Fixed KMB 106 and 118 departures being discarded when KMB's stop-specific
+  ETA response omits the redundant stop field. Such rows now inherit the stop
+  ID from the request context before exact route/direction/service matching.
+
 ## 1.2.0 - 2026-09-03
 
 - Added a fixed Traditional Chinese weekday commute dashboard comparing

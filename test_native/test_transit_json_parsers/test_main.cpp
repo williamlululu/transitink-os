@@ -461,6 +461,27 @@ void test_kmb_service_type_accepts_integer_or_numeric_string_only() {
     TEST_ASSERT_EQUAL_STRING("2", records[1].serviceType.c_str());
 }
 
+void test_kmb_stop_endpoint_uses_requested_stop_when_rows_omit_it() {
+    const char* json = R"({"data":[
+      {"co":"KMB","route":"106","dir":"O","service_type":1,
+       "seq":14,"eta_seq":1,"eta":"2033-05-18T11:38:20+08:00",
+       "dest_tc":"小西灣（藍灣半島）","rmk_tc":""}
+    ]})";
+    transitink::BusWidgetConfig config;
+    config.operatorId = transitink::BusOperator::Kmb;
+    config.stopId = "997CCAB996935BD7";
+    std::vector<transitink::BusEtaRecord> records;
+    std::string error;
+
+    TEST_ASSERT_TRUE(parseKmbEtaJson(json, config, records, error));
+    TEST_ASSERT_EQUAL_UINT32(1, records.size());
+    TEST_ASSERT_EQUAL_STRING("997CCAB996935BD7", records[0].stopId.c_str());
+    TEST_ASSERT_EQUAL_STRING("106", records[0].routeId.c_str());
+    TEST_ASSERT_EQUAL_STRING("O", records[0].directionId.c_str());
+    TEST_ASSERT_EQUAL_STRING("1", records[0].serviceType.c_str());
+    TEST_ASSERT_EQUAL_UINT16(14, records[0].stopSequence);
+}
+
 void test_tfl_route_directions_stops_and_eta_are_normalized() {
     const char* directionJson = R"({
       "id":"24",
@@ -808,6 +829,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_valid_iso_timezones_and_leap_day_are_accepted);
     RUN_TEST(test_schema_string_fields_reject_numeric_and_missing_required_values);
     RUN_TEST(test_kmb_service_type_accepts_integer_or_numeric_string_only);
+    RUN_TEST(test_kmb_stop_endpoint_uses_requested_stop_when_rows_omit_it);
     RUN_TEST(test_tfl_route_directions_stops_and_eta_are_normalized);
     RUN_TEST(test_tfl_parsers_reject_wrong_shapes_and_branch);
     RUN_TEST(test_tfl_rail_catalogue_and_arrivals_are_normalized);
