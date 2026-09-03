@@ -28,10 +28,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install pinned tools
-        run: scripts/install_tools.sh
+        run: bash scripts/install_tools.sh
 
       - name: Audit Python build tools
-        run: scripts/audit_python_tools.sh
+        run: bash scripts/audit_python_tools.sh
 
       - name: Verify generated source and catalog
         run: |
