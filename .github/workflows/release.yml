@@ -55,6 +55,16 @@ jobs:
             .venv/bin/python scripts/package_installer.py \
             --expected-version "${RELEASE_TAG#v}"
 
+      - name: Verify exact signed-off release bytes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          .venv/bin/python scripts/verify_release_approval.py \
+            --approval "release/approved/${RELEASE_TAG}.json" \
+            --installer-dir dist/installer \
+            --source-tree "$source_tree"
+
       - name: Upload verified installer package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

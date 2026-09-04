@@ -6,6 +6,8 @@ on:
     paths:
       - "installer/**"
       - "scripts/assemble_installer_pages.py"
+      - "scripts/verify_release_approval.py"
+      - "release/approved/**"
       - ".github/workflows/installer-pages.yml"
   workflow_dispatch:
 
@@ -47,11 +49,26 @@ jobs:
             exit 1
           fi
           printf 'RELEASE_BUNDLE=%s\n' "${bundles[0]}" >> "$GITHUB_ENV"
+          release_commit="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${release_tag}" \
+            --jq .sha)"
+          release_tree="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/commits/${release_commit}" \
+            --jq .tree.sha)"
+          printf 'RELEASE_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"
+          printf 'RELEASE_SOURCE_TREE=%s\n' "$release_tree" >> "$GITHUB_ENV"
 
       - name: Assemble installer website
         run: |
           python3 scripts/assemble_installer_pages.py \
             --release-bundle "$RELEASE_BUNDLE"
+
+      - name: Verify exact signed-off release bytes
+        run: |
+          python3 scripts/verify_release_approval.py \
+            --approval "release/approved/${RELEASE_TAG}.json" \
+            --installer-dir dist/installer \
+            --source-tree "$RELEASE_SOURCE_TREE"
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
