@@ -785,6 +785,33 @@ String assessmentText(transitink::CommuteAssessment assessment, bool stale) {
     return result;
 }
 
+String routeAStateText(
+    const transitink::CommuteDashboardSnapshot& snapshot) {
+    String result;
+    switch (snapshot.routeAStatus.state) {
+        case transitink::CommuteRouteAState::ConfirmedPair:
+            return assessmentText(snapshot.routeA.assessment,
+                                  snapshot.routeA.stale);
+        case transitink::CommuteRouteAState::ProvisionalTransfer:
+            result = "預計轉車";
+            break;
+        case transitink::CommuteRouteAState::TransferPending:
+            result = "轉車待確認";
+            break;
+        case transitink::CommuteRouteAState::NoService:
+            result = "未有服務";
+            break;
+        case transitink::CommuteRouteAState::Stale:
+            result = "資料過時";
+            break;
+        default:
+            result = "資料暫缺";
+            break;
+    }
+    if (snapshot.routeA.stale) result += "*";
+    return result;
+}
+
 String targetMarginText(
     const transitink::CommuteDashboardSnapshot& snapshot,
     const transitink::CommuteTripEstimate& trip) {
@@ -798,7 +825,7 @@ String targetMarginText(
 }
 
 String leaveHomeText(const transitink::CommuteTripEstimate& trip) {
-    if (!trip.valid) return String("--:--");
+    if (!trip.valid && !trip.firstLegValid) return String("--:--");
     const int64_t now = static_cast<int64_t>(time(nullptr));
     return trip.leaveHomeEpoch <= now + 60 ? String("立即")
                                            : clockForEpoch(trip.leaveHomeEpoch);
@@ -829,8 +856,42 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
     }
 
     if (route == nullptr || !route->primary.valid) {
+        if (snapshot.routeAStatus.state ==
+                transitink::CommuteRouteAState::TransferPending &&
+            snapshot.routeA.primary.firstLegValid) {
+            drawTextColor(12, kCommuteHeroRegion.y + 31,
+                          "轉車班次待確認", kColorWhite, 2);
+            drawTruncatedTextColor(
+                12, kCommuteHeroRegion.y + 59,
+                String("106 ") +
+                    clockForEpoch(snapshot.routeA.primary.firstBusEpoch) +
+                    "／" +
+                    clockForEpoch(
+                        snapshot.routeA.primary.transferArrivalEpoch) +
+                    "到維園",
+                376, kColorWhite);
+            return;
+        }
+        if (snapshot.routeAStatus.state ==
+            transitink::CommuteRouteAState::NoService) {
+            drawTextColor(12, kCommuteHeroRegion.y + 31,
+                          "8P未有服務", kColorWhite, 2);
+            drawTextColor(12, kCommuteHeroRegion.y + 59,
+                          "請查看其他路線", kColorWhite);
+            return;
+        }
+        if (snapshot.routeAStatus.state ==
+                transitink::CommuteRouteAState::Stale ||
+            snapshot.routeAStatus.state ==
+                transitink::CommuteRouteAState::DataUnavailable) {
+            drawTextColor(12, kCommuteHeroRegion.y + 31,
+                          "即時資料暫缺", kColorWhite, 2);
+            drawTextColor(12, kCommuteHeroRegion.y + 59,
+                          "資料不足不等同沒有服務", kColorWhite);
+            return;
+        }
         drawTextColor(12, kCommuteHeroRegion.y + 31,
-                      "暫無可靠即時路線", kColorWhite, 2);
+                       "暫無可靠即時路線", kColorWhite, 2);
         drawTextColor(12, kCommuteHeroRegion.y + 59,
                       "請提早出門並查看實際班次", kColorWhite);
         return;
@@ -841,6 +902,7 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
     drawTextColor(10, kCommuteHeroRegion.y + 18,
                   recovery ? String("遲到應變／最快選擇") : String("建議"),
                   kColorWhite);
+    if (route->primary.provisional) buses += " 預計";
     drawTextColor(10, kCommuteHeroRegion.y + 55, buses, kColorWhite, 2);
     drawTextColor(214, kCommuteHeroRegion.y + 18, "最遲出門", kColorWhite);
     drawTextColor(214, kCommuteHeroRegion.y + 39,
@@ -850,7 +912,10 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
                   clockForEpoch(route->primary.arrivalEpoch), kColorWhite);
     drawTruncatedTextColor(
         214, kCommuteHeroRegion.y + 61,
-        assessmentText(route->assessment, route->stale) + "／" +
+        (route == &snapshot.routeA
+             ? routeAStateText(snapshot)
+             : assessmentText(route->assessment, route->stale)) +
+            "／" +
             targetMarginText(snapshot, route->primary),
         176, kColorWhite);
 }
@@ -865,7 +930,7 @@ String commuteDataQualityText(
         case transitink::CommuteDataQuality::Stale:
             return "資料過時";
         default:
-            return WiFi.status() == WL_CONNECTED ? String("暫無班次")
+            return WiFi.status() == WL_CONNECTED ? String("資料暫缺")
                                                  : String("網絡中斷");
     }
 }
@@ -893,22 +958,64 @@ void drawCommuteRouteA(
     canvas.drawFastHLine(region.x, region.y + region.h - 1, region.w,
                          kColorBlack);
     drawTruncatedText(10, region.y + 19,
-                      "A  106→8P　紅磡街市→維園轉車→漁灣邨", 310);
+                      "A  106→8P　紅磡街市→維園轉車→漁灣邨", 280);
     drawRightAlignedTruncatedText(
-        390, region.y + 19, assessmentText(route.assessment, route.stale), 76);
+        390, region.y + 19, routeAStateText(snapshot), 92);
+    if (snapshot.routeAStatus.state ==
+        transitink::CommuteRouteAState::TransferPending) {
+        if (!route.primary.firstLegValid) {
+            drawText(10, region.y + 41,
+                     "下一班106尚未進入即時資料");
+            drawText(10, region.y + 57, "並非確認沒有服務");
+            return;
+        }
+        drawTruncatedText(
+            10, region.y + 39,
+            String("下一班106 ") + clockForEpoch(route.primary.firstBusEpoch) +
+                "　最遲出門 " + leaveHomeText(route.primary),
+            380);
+        String transferDetail =
+            String("約") + clockForEpoch(route.primary.transferArrivalEpoch) +
+            "到維園　" + clockForEpoch(route.primary.transferReadyEpoch) +
+            "可轉車　";
+        transferDetail += snapshot.routeAStatus.live8pHorizonEpoch > 0
+                              ? String("8P即時至") +
+                                    clockForEpoch(snapshot.routeAStatus
+                                                      .live8pHorizonEpoch)
+                              : String("8P尚未進入即時班次");
+        drawTruncatedText(10, region.y + 56, transferDetail, 380);
+        return;
+    }
+    if (snapshot.routeAStatus.state ==
+        transitink::CommuteRouteAState::NoService) {
+        drawText(10, region.y + 43,
+                 snapshot.routeAStatus.reason ==
+                         transitink::CommuteRouteAReason::ServiceNotStarted
+                     ? String("8P服務尚未開始")
+                     : String("8P服務已完結"));
+        return;
+    }
+    if (snapshot.routeAStatus.state == transitink::CommuteRouteAState::Stale ||
+        snapshot.routeAStatus.state ==
+            transitink::CommuteRouteAState::DataUnavailable) {
+        drawText(10, region.y + 43, "即時資料暫缺，未當作沒有服務");
+        return;
+    }
     if (!route.primary.valid) {
-        drawText(10, region.y + 43, "暫無可趕及的106及8P轉車組合");
+        drawText(10, region.y + 43, "轉車資料待確認");
         return;
     }
     drawTruncatedText(
         10, region.y + 39,
         String("下一班 106 ") + clockForEpoch(route.primary.firstBusEpoch) +
-            "　8P " + clockForEpoch(route.primary.connectionEpoch) +
+            (route.primary.provisional ? "　8P預計 " : "　8P ") +
+            clockForEpoch(route.primary.connectionEpoch) +
             "　轉車餘裕 " + route.primary.transferMarginMinutes + "分",
         380);
     const String fallback =
         route.fallback.valid
-            ? String("錯過首班 ") +
+            ? String(route.fallback.provisional ? "錯過首班 預計"
+                                                : "錯過首班 ") +
                   clockForEpoch(route.fallback.arrivalEpoch) + "到"
             : String("錯過首班：後續未明");
     drawTruncatedText(
@@ -975,6 +1082,20 @@ void drawCommuteFooter(
 
     String headline = "即時班次配合保守行車估算";
     if (selected == nullptr &&
+        snapshot.routeAStatus.state ==
+            transitink::CommuteRouteAState::TransferPending) {
+        headline = "8P尚未進入即時班次；保留106資料";
+    } else if (selected == nullptr &&
+               snapshot.routeAStatus.state ==
+                   transitink::CommuteRouteAState::NoService) {
+        headline = "8P未在適用服務時段";
+    } else if (selected == nullptr &&
+               (snapshot.routeAStatus.state ==
+                    transitink::CommuteRouteAState::Stale ||
+                snapshot.routeAStatus.state ==
+                    transitink::CommuteRouteAState::DataUnavailable)) {
+        headline = "即時資料暫缺，不等同暫無班次";
+    } else if (selected == nullptr &&
         transitink::isActiveCommuteSession(snapshot.sessionMode)) {
         headline = "警告：暫無可靠路線，07:25難以確定";
     } else if (selected != nullptr &&
@@ -999,6 +1120,14 @@ void drawCommuteFooter(
             String("錯過首班：預計") +
                 clockForEpoch(selected->fallback.arrivalEpoch) + "到／" +
                 fallbackAssessment,
+            380, foreground);
+    } else if (snapshot.routeAStatus.state ==
+                   transitink::CommuteRouteAState::TransferPending &&
+               snapshot.routeA.fallback.firstLegValid) {
+        drawTruncatedTextColor(
+            10, kCommuteFooterRegion.y + 32,
+            String("錯過首班106：下一班") +
+                clockForEpoch(snapshot.routeA.fallback.firstBusEpoch),
             380, foreground);
     } else {
         drawTextColor(10, kCommuteFooterRegion.y + 32,

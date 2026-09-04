@@ -261,11 +261,19 @@ bool parseEtaJson(const char* json,
                   const char* parseError,
                   const char* shapeError,
                   std::vector<transitink::BusEtaRecord>& records,
-                  std::string& error) {
+                  std::string& error,
+                  transitink::BusEtaResponseInfo* responseInfo) {
     records.clear();
     error.clear();
+    if (responseInfo != nullptr) {
+        responseInfo->generatedAtEpoch = 0;
+        responseInfo->dataAtEpoch = 0;
+        responseInfo->rawRowCount = 0;
+        responseInfo->parsedRowCount = 0;
+    }
 
     StaticJsonDocument<512> filter;
+    filter["generated_timestamp"] = true;
     filter["data"][0]["co"] = true;
     filter["data"][0]["route"] = true;
     filter["data"][0]["dir"] = true;
@@ -278,6 +286,7 @@ bool parseEtaJson(const char* json,
     filter["data"][0]["dest_en"] = true;
     filter["data"][0]["rmk_tc"] = true;
     filter["data"][0]["rmk_en"] = true;
+    filter["data"][0]["data_timestamp"] = true;
     DynamicJsonDocument document(32768);
     const DeserializationError jsonError = deserializeJson(
         document, json, DeserializationOption::Filter(filter));
@@ -288,6 +297,12 @@ bool parseEtaJson(const char* json,
     if (!document["data"].is<JsonArrayConst>()) {
         error = shapeError;
         return false;
+    }
+    if (responseInfo != nullptr) {
+        responseInfo->generatedAtEpoch = parseIsoEpoch(
+            document["generated_timestamp"] | "");
+        responseInfo->rawRowCount =
+            document["data"].as<JsonArrayConst>().size();
     }
 
     for (JsonObjectConst item : document["data"].as<JsonArrayConst>()) {
@@ -301,6 +316,7 @@ bool parseEtaJson(const char* json,
         std::string remarkEn;
         std::string serviceType;
         std::string stopId;
+        std::string dataTimestamp;
         int stopSequence = 0;
         int etaSequence = 0;
         if (!readRequiredString(item["co"], company) ||
@@ -312,6 +328,7 @@ bool parseEtaJson(const char* json,
             !readOptionalString(item, "dest_en", destinationEn) ||
             !readOptionalString(item, "rmk_en", remarkEn) ||
             !readOptionalString(item, "stop", stopId) ||
+            !readOptionalString(item, "data_timestamp", dataTimestamp) ||
             (!item["seq"].isNull() &&
              (!readRequiredInt(item["seq"], stopSequence) ||
               stopSequence <= 0 || stopSequence > UINT16_MAX)) ||
@@ -343,6 +360,13 @@ bool parseEtaJson(const char* json,
         record.etaSequence = static_cast<uint8_t>(etaSequence);
         record.cancelled = record.remarkTc.find("取消") != std::string::npos;
         records.push_back(std::move(record));
+        if (responseInfo != nullptr) {
+            responseInfo->dataAtEpoch = std::max(
+                responseInfo->dataAtEpoch, parseIsoEpoch(dataTimestamp));
+        }
+    }
+    if (responseInfo != nullptr) {
+        responseInfo->parsedRowCount = records.size();
     }
     return true;
 }
@@ -658,20 +682,23 @@ bool parseGmbEtaJson(const char* json,
 bool parseCitybusEtaJson(const char* json,
                          const transitink::BusWidgetConfig& config,
                          std::vector<transitink::BusEtaRecord>& records,
-                         std::string& error) {
+                         std::string& error,
+                         transitink::BusEtaResponseInfo* responseInfo) {
     if (config.operatorId != transitink::BusOperator::Citybus) {
         records.clear();
         error = "城巴營辦商設定不正確";
         return false;
     }
     return parseEtaJson(json, config, "CTB", false, "城巴到站時間資料無法解析",
-                        "城巴到站時間資料格式錯誤", records, error);
+                        "城巴到站時間資料格式錯誤", records, error,
+                        responseInfo);
 }
 
 bool parseKmbEtaJson(const char* json,
                      const transitink::BusWidgetConfig& config,
                      std::vector<transitink::BusEtaRecord>& records,
-                     std::string& error) {
+                     std::string& error,
+                     transitink::BusEtaResponseInfo* responseInfo) {
     if (config.operatorId != transitink::BusOperator::Kmb &&
         config.operatorId != transitink::BusOperator::LongWin) {
         records.clear();
@@ -680,7 +707,8 @@ bool parseKmbEtaJson(const char* json,
     }
     return parseEtaJson(json, config, "KMB", true,
                         "九巴及龍運到站時間資料無法解析",
-                        "九巴及龍運到站時間資料格式錯誤", records, error);
+                        "九巴及龍運到站時間資料格式錯誤", records, error,
+                        responseInfo);
 }
 
 bool parseTflDirectionsJson(

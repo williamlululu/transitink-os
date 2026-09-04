@@ -56,6 +56,14 @@ struct BusEtaRecord {
     uint8_t etaSequence = 0;
 };
 
+struct BusEtaResponseInfo {
+    int16_t httpStatus = 0;
+    int64_t generatedAtEpoch = 0;
+    int64_t dataAtEpoch = 0;
+    std::size_t rawRowCount = 0;
+    std::size_t parsedRowCount = 0;
+};
+
 struct GmbEtaRecord {
     int32_t diffMinutes = -1;
     std::string remarkTc;

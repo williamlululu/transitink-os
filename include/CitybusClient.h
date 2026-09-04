@@ -22,10 +22,12 @@ public:
                          String& error);
     bool fetchEtaRecords(const transitink::BusWidgetConfig& config,
                          std::vector<transitink::BusEtaRecord>& records,
-                         String& error);
+                         String& error,
+                         transitink::BusEtaResponseInfo* responseInfo = nullptr);
 
 private:
-    bool httpGet(const String& url, String& body, String& error);
+    bool httpGet(const String& url, String& body, String& error,
+                 int16_t* httpStatus = nullptr);
     bool httpGetBounded(const String& url,
                         std::size_t limit,
                         String& body,

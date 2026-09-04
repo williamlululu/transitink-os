@@ -2,6 +2,20 @@
 
 All notable user-visible changes to TransitInk OS will be documented here.
 
+## 1.2.3 - 2026-09-04
+
+- Fixed Route A disappearing when the live 8P response ends before the
+  calculated Victoria Park transfer-ready time. The dashboard now distinguishes
+  a confirmed live pair, a transfer beyond the visible ETA horizon, a
+  conservative provisional transfer, no published service, and unavailable or
+  stale data.
+- Preserved the next usable 106 and its leave-home/transfer details while 8P is
+  still beyond the live horizon, and replaces any provisional headway estimate
+  automatically when a matching live 8P appears.
+- Kept 30-second user-visible recalculation while limiting provider fetches to
+  the operators' approximately one-minute source cadence and tracking source
+  timestamps so an unchanged response is not treated as new evidence.
+
 ## 1.2.2 - 2026-09-03
 
 - Changed the default firmware-update feed to the owner-controlled

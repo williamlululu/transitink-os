@@ -28,11 +28,14 @@ BusWidgetConfig citybusConfig(const char* route,
 // feeds. 106 and 118 are joint routes, so both operators must be queried.
 const std::array<CommuteBusFeedConfig, kCommuteEtaStreamCount> kConfigs = {{
     {citybusConfig("106", "001533", "紅磡街市"), 14, 44, "001224",
-     "997CCAB996935BD7", "O", "1", 14},
+     "997CCAB996935BD7", "O", "1", 14,
+     CommutePhysicalDirection::TowardYueWan},
     {citybusConfig("8P", "001213", "維多利亞公園"), 5, 9, "001224",
-     nullptr, nullptr, nullptr, 0},
+     nullptr, nullptr, nullptr, 0,
+     CommutePhysicalDirection::TowardYueWan},
     {citybusConfig("118", "001476", "紅磡海底隧道收費廣場"), 16, 27,
-     "001224", "C564EDC91AFD7D04", "O", "1", 16},
+     "001224", "C564EDC91AFD7D04", "O", "1", 16,
+     CommutePhysicalDirection::TowardYueWan},
 }};
 
 bool recordMatches(const BusEtaRecord& record,
@@ -105,16 +108,36 @@ void initializeCommuteBusRows(CommuteDashboardSnapshot& dashboard) {
     }
 }
 
+bool commuteEtaRecordMatches(CommuteEtaKind kind,
+                             const BusEtaRecord& record) {
+    const std::size_t index = commuteEtaIndex(kind);
+    return index < kConfigs.size() && recordMatches(record, kConfigs[index]);
+}
+
+const char* commutePhysicalDirectionId(CommutePhysicalDirection direction) {
+    switch (direction) {
+        case CommutePhysicalDirection::TowardYueWan:
+            return "toward_yue_wan";
+    }
+    return "unknown";
+}
+
 void applyCommuteEtaRecords(CommuteDashboardSnapshot& dashboard,
                             CommuteEtaKind kind,
                             const std::vector<BusEtaRecord>& records,
                             int64_t nowEpoch,
                             bool anySourceSucceeded,
                             bool allSourcesSucceeded,
-                            const std::string& error) {
+                            const std::string& error,
+                            const CommuteEtaEvidence& evidence) {
     CommuteEtaSnapshot& previous = commuteEta(dashboard, kind);
     if (!anySourceSucceeded) {
         removeExpired(previous, nowEpoch);
+        previous.rawRowCount = evidence.rawRowCount;
+        previous.parsedRowCount = evidence.parsedRowCount;
+        previous.sourcesExpected = evidence.sourcesExpected;
+        previous.sourcesSucceeded = evidence.sourcesSucceeded;
+        previous.sourceChanged = false;
         previous.stale = true;
         previous.partial = false;
         previous.error = error;
@@ -157,11 +180,28 @@ void applyCommuteEtaRecords(CommuteDashboardSnapshot& dashboard,
         next.epochs[index] = epochs[index];
     }
     next.fetchedAtEpoch = nowEpoch;
+    next.sourceGeneratedAtEpoch = evidence.generatedAtEpoch;
+    next.sourceDataAtEpoch = evidence.dataAtEpoch;
+    next.rawRowCount = evidence.rawRowCount;
+    next.parsedRowCount = evidence.parsedRowCount;
+    next.acceptedRowCount = matched.size();
+    next.sourcesExpected = evidence.sourcesExpected == 0 ? 1
+                                                         : evidence.sourcesExpected;
+    next.sourcesSucceeded = evidence.sourcesSucceeded == 0 ? 1
+                                                           : evidence.sourcesSucceeded;
+    const bool hasSourceMarker = next.sourceGeneratedAtEpoch > 0 ||
+                                 next.sourceDataAtEpoch > 0;
+    next.sourceChanged = !hasSourceMarker || previous.fetchedAtEpoch == 0 ||
+                         previous.sourceGeneratedAtEpoch !=
+                             next.sourceGeneratedAtEpoch ||
+                         previous.sourceDataAtEpoch != next.sourceDataAtEpoch;
     next.stale = !allSourcesSucceeded;
     next.partial = !allSourcesSucceeded;
     next.error = error;
     previous = std::move(next);
-    dashboard.updatedAtEpoch = nowEpoch;
+    dashboard.updatedAtEpoch = previous.sourceDataAtEpoch > 0
+                                   ? previous.sourceDataAtEpoch
+                                   : nowEpoch;
 }
 
 void markAllCommuteEtasFailed(CommuteDashboardSnapshot& dashboard,

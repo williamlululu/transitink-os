@@ -100,6 +100,17 @@ SCENARIOS = (
         "週末手動查詢；十分鐘後返回待機", "錯過首班：預計07:22到／仍可趕及",
         "資料正常／手動更新",
     ),
+    Scenario(
+        "06_transfer_pending.png", "06:04", "星期五 9月4日", "25°C",
+        "現時無雨／今日有雨機會低", "密集更新", "PENDING", "06:14", "--:--",
+        "轉車待確認", "未能估算", "轉車待確認",
+        "下一班106 06:20　最遲出門 06:14",
+        "約06:37到維園　06:39可轉車　8P即時至06:31", "準時",
+        "下一班 118 06:25　步行 13分",
+        "最遲出門 06:10　預計到達 07:00　錯過首班 07:14到", True,
+        "8P尚未進入即時班次；保留106資料",
+        "錯過首班106：下一班06:30", "資料正常／密集更新",
+    ),
 )
 
 
@@ -164,7 +175,10 @@ class PreviewRenderer:
             hero_label = "遲到應變／最快選擇"
         else:
             hero_label = "建議"
-        if scenario.recommendation == "--":
+        if scenario.recommendation == "PENDING":
+            self.text(draw, (12, 49), "轉車班次待確認", 21, WHITE, 376)
+            self.text(draw, (12, 82), "106 06:20／約06:37到維園", 14, WHITE, 376)
+        elif scenario.recommendation == "--":
             self.text(draw, (12, 49), "暫無可靠即時路線", 21, WHITE, 376)
             self.text(draw, (12, 82), "請提早出門並查看實際班次", 14, WHITE, 376)
         else:
@@ -210,8 +224,8 @@ class PreviewRenderer:
         detail: str,
     ) -> None:
         draw.line((0, top + 61, WIDTH - 1, top + 61), fill=BLACK, width=1)
-        self.text(draw, (10, top + 2), title, 13, BLACK, 306)
-        self.text(draw, (390, top + 2), status, 12, BLACK, 74, anchor="ra")
+        self.text(draw, (10, top + 2), title, 13, BLACK, 280)
+        self.text(draw, (390, top + 2), status, 12, BLACK, 92, anchor="ra")
         self.text(draw, (10, top + 23), buses, 11, BLACK, 380)
         self.text(draw, (10, top + 42), detail, 11, BLACK, 380)
 

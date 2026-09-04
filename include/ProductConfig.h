@@ -5,7 +5,7 @@
 #define FIRMWARE_PRODUCT_ID "transitink-os"
 #define FIRMWARE_BOARD_ID "zectrix_note4"
 #define DEVICE_NAME FIRMWARE_PRODUCT_NAME
-#define FIRMWARE_VERSION "1.2.2"
+#define FIRMWARE_VERSION "1.2.3"
 #define CONFIG_AP_PREFIX FIRMWARE_SHORT_NAME
 
 #ifndef TRANSITINK_FIRMWARE_UPDATE_BASE_URL
@@ -26,6 +26,8 @@
 #define COMMUTE_RAPID_POLL_SECONDS 30
 #define COMMUTE_RECOVERY_POLL_SECONDS 120
 #define COMMUTE_MANUAL_POLL_SECONDS 30
+#define COMMUTE_PROVIDER_FETCH_SECONDS 60
+#define COMMUTE_ROUTE_A_VERBOSE_DIAGNOSTICS 0
 #define COMMUTE_MANUAL_SESSION_MINUTES 10
 #define COMMUTE_WEATHER_REFRESH_SECONDS 900
 #define COMMUTE_FORECAST_REFRESH_SECONDS 1800
@@ -46,6 +48,21 @@
 #define COMMUTE_118_RIDE_MINUTES 35
 #define COMMUTE_SAFE_ARRIVAL_MARGIN_MINUTES 5
 #define COMMUTE_MAXIMUM_ETA_AGE_MINUTES 3
+// Transport Department GTFS headway snapshot retrieved 2026-09-02 (source
+// files generated 2026-08-27):
+// https://data.gov.hk/en-data/dataset/hk-td-tis_11-pt-headway-en
+// Route 8P toward Siu Sai Wan starts at Exhibition Centre at 06:05 on
+// weekdays, every 12 minutes until 07:05 and every 15 minutes until 08:50.
+// The configurable 15-minute origin-to-Victoria-Park allowance is deliberately
+// slower than the 9.1-10.0 minute geometry/whole-route estimate. It is used
+// only for visibly provisional transfers and is replaced by any usable live ETA.
+#define COMMUTE_8P_SERVICE_START_MINUTES 365
+#define COMMUTE_8P_LAST_POSSIBLE_TRANSFER_MINUTES 1495
+#define COMMUTE_8P_ORIGIN_TO_TRANSFER_MINUTES 15
+#define COMMUTE_8P_WEEKDAY_EARLY_HEADWAY_END_MINUTES 425
+#define COMMUTE_8P_WEEKDAY_HEADWAY_END_MINUTES 530
+#define COMMUTE_8P_WEEKDAY_EARLY_HEADWAY_MINUTES 12
+#define COMMUTE_8P_WEEKDAY_LATER_HEADWAY_MINUTES 15
 #define SLEEP_ENABLED_DEFAULT 1
 #define SLEEP_WAKE_DEFAULT_MINUTES 5
 #define SLEEP_MAINTENANCE_DEFAULT_HOURS 12

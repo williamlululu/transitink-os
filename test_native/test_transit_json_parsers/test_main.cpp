@@ -140,10 +140,16 @@ void test_fixture_parses_exact_records_and_normalizes_two_arrivals() {
     const std::string json = loadFixture("test_host/fixtures/citybus_eta.json");
     std::vector<transitink::BusEtaRecord> records;
     std::string error = "sentinel";
+    transitink::BusEtaResponseInfo responseInfo;
 
-    TEST_ASSERT_TRUE(parseCitybusEtaJson(json.c_str(), citybusConfig().bus, records, error));
+    TEST_ASSERT_TRUE(parseCitybusEtaJson(json.c_str(), citybusConfig().bus,
+                                         records, error, &responseInfo));
     TEST_ASSERT_EQUAL_STRING("", error.c_str());
     TEST_ASSERT_EQUAL_UINT32(8, records.size());
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch, responseInfo.generatedAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch - 20, responseInfo.dataAtEpoch);
+    TEST_ASSERT_EQUAL_UINT32(9, responseInfo.rawRowCount);
+    TEST_ASSERT_EQUAL_UINT32(8, responseInfo.parsedRowCount);
     assertRecord(records[0], "11", "O", kNowEpoch + 300, "渣甸山", "", false);
     TEST_ASSERT_EQUAL_STRING("Jardine's Lookout",
                              records[0].destinationLabelEn.c_str());

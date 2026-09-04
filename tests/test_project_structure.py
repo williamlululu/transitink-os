@@ -114,7 +114,7 @@ class ProjectStructureTests(unittest.TestCase):
         self.assertIn('#define FIRMWARE_PRODUCT_NAME "TransitInk OS"', config)
         self.assertIn('#define FIRMWARE_SHORT_NAME "TransitInk"', config)
         self.assertIn("#define CONFIG_AP_PREFIX FIRMWARE_SHORT_NAME", config)
-        self.assertIn('#define FIRMWARE_VERSION "1.2.2"', config)
+        self.assertIn('#define FIRMWARE_VERSION "1.2.3"', config)
         self.assertIn(
             '"https://williamlululu.github.io/transitink-os"', config
         )
@@ -429,7 +429,7 @@ class ProjectStructureTests(unittest.TestCase):
 
         config = read_text("include/ProductConfig.h")
         profile_test = read_text("test_host/test_board_profile.cpp")
-        self.assertIn('#define FIRMWARE_VERSION "1.2.2"', config)
+        self.assertIn('#define FIRMWARE_VERSION "1.2.3"', config)
         self.assertIn("battery.adcPin == 4", profile_test)
         self.assertIn("battery.sensePowerPin == 17", profile_test)
         self.assertIn("battery.chargeDetectPin == 2", profile_test)

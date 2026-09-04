@@ -63,6 +63,10 @@ class CommuteProductTests(unittest.TestCase):
             "COMMUTE_RAPID_POLL_SECONDS": 30,
             "COMMUTE_RECOVERY_POLL_SECONDS": 120,
             "COMMUTE_MANUAL_POLL_SECONDS": 30,
+            "COMMUTE_PROVIDER_FETCH_SECONDS": 60,
+            "COMMUTE_8P_SERVICE_START_MINUTES": 365,
+            "COMMUTE_8P_LAST_POSSIBLE_TRANSFER_MINUTES": 1495,
+            "COMMUTE_8P_ORIGIN_TO_TRANSFER_MINUTES": 15,
             "COMMUTE_MANUAL_SESSION_MINUTES": 10,
             "COMMUTE_WEATHER_REFRESH_SECONDS": 900,
             "COMMUTE_POWER_TELEMETRY_SECONDS": 900,
@@ -104,6 +108,7 @@ class CommuteProductTests(unittest.TestCase):
             self.assertIn(token, core)
         for alternative in ('"102"', '"110"', '"606"'):
             self.assertNotIn(alternative, core)
+        self.assertNotIn('"002561"', core)
 
     def test_parser_preserves_stop_and_eta_sequence(self):
         parser = read("src/TransitJsonParsers.cpp")
@@ -181,6 +186,47 @@ class CommuteProductTests(unittest.TestCase):
         self.assertIn('Serial.println("EPD partial skipped: unchanged")', display)
         self.assertIn("kMaxPartialRefreshes = 8", display)
         self.assertIn("panel.showPartialRegion", display)
+        self.assertIn("nextCommuteProviderFetchMs", main)
+        self.assertIn("COMMUTE_PROVIDER_FETCH_SECONDS", main)
+        self.assertIn(
+            "Commute provider fetch skipped: one-minute source cadence", main
+        )
+        self.assertIn("nextCommuteProviderFetchMs = UINT32_MAX", main)
+
+    def test_route_a_has_explicit_horizon_and_data_states(self):
+        header = read("include/core/CommuteDashboardCore.h")
+        planner = read("src/core/CommuteDashboardCore.cpp")
+        display = read("src/EInkDisplay.cpp")
+        for token in (
+            "ConfirmedPair",
+            "TransferPending",
+            "ProvisionalTransfer",
+            "NoService",
+            "DataUnavailable",
+            "TransferBeyondEtaHorizon",
+            "ServiceNotStarted",
+            "ServiceEnded",
+        ):
+            self.assertIn(token, header + planner)
+        for label in (
+            "轉車班次待確認",
+            "8P尚未進入即時班次",
+            "預計轉車",
+            "資料不足不等同沒有服務",
+        ):
+            self.assertIn(label, display)
+
+    def test_provider_source_timestamps_are_transport_evidence(self):
+        parser = read("src/TransitJsonParsers.cpp")
+        commute = read("src/core/CommuteBusCore.cpp")
+        for token in (
+            'filter["generated_timestamp"]',
+            'filter["data"][0]["data_timestamp"]',
+            "sourceGeneratedAtEpoch",
+            "sourceDataAtEpoch",
+            "sourceChanged",
+        ):
+            self.assertIn(token, parser + commute)
 
     def test_weather_cache_is_at_least_fifteen_minutes(self):
         main = read("src/main.cpp")
@@ -236,7 +282,7 @@ class CommuteProductTests(unittest.TestCase):
         display = read("src/EInkDisplay.cpp")
         self.assertIn(
             'drawTruncatedText(10, region.y + 19,\n'
-            '                      "A  106→8P　紅磡街市→維園轉車→漁灣邨", 310)',
+            '                      "A  106→8P　紅磡街市→維園轉車→漁灣邨", 280)',
             display,
         )
         self.assertIn(
@@ -245,6 +291,7 @@ class CommuteProductTests(unittest.TestCase):
             display,
         )
         self.assertIn("planTruncatedUtf8", display)
+        self.assertIn("!trip.valid && !trip.firstLegValid", display)
 
     def test_preview_renderer_covers_required_scenarios(self):
         preview = read("scripts/render_commute_previews.py")
@@ -254,6 +301,7 @@ class CommuteProductTests(unittest.TestCase):
             "03_recovery_0710.png",
             "04_stale_unavailable.png",
             "05_manual_weekend.png",
+            "06_transfer_pending.png",
         ):
             self.assertIn(filename, preview)
         self.assertIn("WIDTH = 400", preview)
@@ -264,7 +312,7 @@ class CommuteProductTests(unittest.TestCase):
         config = read("include/ProductConfig.h")
         match = re.search(r'^#define FIRMWARE_VERSION "([^"]+)"$', config, re.M)
         self.assertIsNotNone(match)
-        self.assertEqual("1.2.2", match.group(1))
+        self.assertEqual("1.2.3", match.group(1))
         self.assertRegex(match.group(1), r"^\d+\.\d+\.\d+$")
 
 

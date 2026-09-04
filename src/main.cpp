@@ -81,6 +81,7 @@ ConfigPortal configPortal(deviceConfig, configStore, widgetCatalogService);
 unsigned long nextClockRefreshMs = 0;
 unsigned long nextWeatherRefreshMs = 0;
 unsigned long nextCommuteBusRefreshMs = 0;
+unsigned long nextCommuteProviderFetchMs = 0;
 unsigned long nextCommuteForecastRefreshMs = 0;
 unsigned long wakeStartedAtMs = 0;
 unsigned long lastChargeStatusPollMs = 0;
@@ -128,6 +129,13 @@ const transitink::CommutePlannerSettings kCommutePlannerSettings{
     COMMUTE_118_RIDE_MINUTES,
     COMMUTE_SAFE_ARRIVAL_MARGIN_MINUTES,
     COMMUTE_MAXIMUM_ETA_AGE_MINUTES,
+    COMMUTE_8P_SERVICE_START_MINUTES,
+    COMMUTE_8P_LAST_POSSIBLE_TRANSFER_MINUTES,
+    COMMUTE_8P_ORIGIN_TO_TRANSFER_MINUTES,
+    COMMUTE_8P_WEEKDAY_EARLY_HEADWAY_END_MINUTES,
+    COMMUTE_8P_WEEKDAY_HEADWAY_END_MINUTES,
+    COMMUTE_8P_WEEKDAY_EARLY_HEADWAY_MINUTES,
+    COMMUTE_8P_WEEKDAY_LATER_HEADWAY_MINUTES,
 };
 RTC_NOINIT_ATTR uint32_t sleepResumeMarker;
 RTC_NOINIT_ATTR uint32_t sleepResumeMarkerInverse;
@@ -264,6 +272,40 @@ bool hasValidTime() {
     return time(nullptr) >= 1700000000;
 }
 
+void logCommuteRouteADecision(
+    const transitink::CommutePlannerDiagnostics* diagnostics) {
+    const auto& trip = commuteDashboardSnapshot.routeA.primary;
+    const auto& status = commuteDashboardSnapshot.routeAStatus;
+    Serial.printf(
+        "Route A state=%s reason=%s boarding_deadline=%lld "
+        "victoria_arrival=%lld transfer_ready=%lld live_8p_horizon=%lld "
+        "provisional=%s\n",
+        transitink::commuteRouteAStateId(status.state),
+        transitink::commuteRouteAReasonId(status.reason),
+        static_cast<long long>(trip.leaveHomeEpoch),
+        static_cast<long long>(trip.transferArrivalEpoch),
+        static_cast<long long>(trip.transferReadyEpoch),
+        static_cast<long long>(status.live8pHorizonEpoch),
+        status.timetableUsed ? "yes" : "no");
+#if COMMUTE_ROUTE_A_VERBOSE_DIAGNOSTICS
+    if (diagnostics == nullptr) return;
+    for (std::size_t index = 0; index < diagnostics->routeAPairCount; ++index) {
+        const auto& pair = diagnostics->routeAPairs[index];
+        Serial.printf(
+            "Route A pair 106=%lld ready=%lld 8P=%lld result=%s\n",
+            static_cast<long long>(pair.firstBusEpoch),
+            static_cast<long long>(pair.transferReadyEpoch),
+            static_cast<long long>(pair.connectionEpoch),
+            pair.outcome ==
+                    transitink::CommuteTransferPairOutcome::AcceptedLive
+                ? "accepted_live"
+                : "rejected_before_transfer_ready");
+    }
+#else
+    (void)diagnostics;
+#endif
+}
+
 void recalculateCommutePlan() {
     const transitink::CommuteSessionMode mode =
         finalAutomaticUpdateInProgress
@@ -273,6 +315,7 @@ void recalculateCommutePlan() {
         transitink::planCommuteDashboard(
             commuteDashboardSnapshot, 0, 0, false, kCommutePlannerSettings,
             mode);
+        logCommuteRouteADecision(nullptr);
         return;
     }
     const time_t now = time(nullptr);
@@ -284,9 +327,20 @@ void recalculateCommutePlan() {
     target.tm_sec = 0;
     const int64_t targetEpoch = static_cast<int64_t>(mktime(&target));
     const bool weekday = localNow.tm_wday >= 1 && localNow.tm_wday <= 5;
+    const uint16_t localMinuteOfDay = static_cast<uint16_t>(
+        localNow.tm_hour * 60 + localNow.tm_min);
+#if COMMUTE_ROUTE_A_VERBOSE_DIAGNOSTICS
+    transitink::CommutePlannerDiagnostics diagnostics;
+    transitink::CommutePlannerDiagnostics* diagnosticsOutput = &diagnostics;
+#else
+    auto* diagnosticsOutput =
+        static_cast<transitink::CommutePlannerDiagnostics*>(nullptr);
+#endif
     transitink::planCommuteDashboard(
         commuteDashboardSnapshot, static_cast<int64_t>(now), targetEpoch,
-        weekday, kCommutePlannerSettings, mode);
+        weekday, kCommutePlannerSettings, mode, localMinuteOfDay,
+        diagnosticsOutput);
+    logCommuteRouteADecision(diagnosticsOutput);
 }
 
 void applyConfiguredTimeZone() {
@@ -486,6 +540,10 @@ void refreshCommuteBusesNow(bool render) {
             commuteDashboardSnapshot, nowEpoch, offline);
         error = offline.c_str();
     }
+    nextCommuteProviderFetchMs =
+        millis() +
+        (WiFi.status() == WL_CONNECTED ? COMMUTE_PROVIDER_FETCH_SECONDS : 5) *
+            1000UL;
     recalculateCommutePlan();
     Serial.print("Commute bus refresh ok: ");
     Serial.println(ok ? "yes" : "partial/fallback");
@@ -521,11 +579,12 @@ void scheduleNextCommuteBusRefresh() {
                                             mode, settings);
     if (delaySeconds == 0) {
         nextCommuteBusRefreshMs = UINT32_MAX;
+        nextCommuteProviderFetchMs = UINT32_MAX;
         Serial.println("Commute transport polling paused");
         return;
     }
     nextCommuteBusRefreshMs = millis() + delaySeconds * 1000UL;
-    Serial.print("Next commute transport poll seconds: ");
+    Serial.print("Next commute local recalculation seconds: ");
     Serial.println(delaySeconds);
 }
 
@@ -582,7 +641,20 @@ void serviceCommuteDashboardIfDue() {
             nextCommuteBusRefreshMs = nowMs + 5000UL;
             return;
         }
-        refreshCommuteBusesNow();
+        if (transitink::deadlineReached(nowMs,
+                                       nextCommuteProviderFetchMs)) {
+            refreshCommuteBusesNow();
+            return;
+        }
+        Serial.println(
+            "Commute provider fetch skipped: one-minute source cadence");
+        recalculateCommutePlan();
+        scheduleNextCommuteBusRefresh();
+        if (dashboardVisible && activeCommutePage == 0) {
+            einkDisplay.refreshCommuteBody(commuteDashboardSnapshot,
+                                           forecastSnapshot,
+                                           weatherSnapshot);
+        }
         return;
     }
     if (transitink::deadlineReached(nowMs, nextCommuteForecastRefreshMs)) {
@@ -1125,6 +1197,7 @@ void returnToDashboard() {
         showActiveCommuteDashboard();
         scheduleNextClockRefresh();
         nextCommuteBusRefreshMs = UINT32_MAX;
+        nextCommuteProviderFetchMs = UINT32_MAX;
         nextCommuteForecastRefreshMs = UINT32_MAX;
     } else {
         refreshAllWidgetsNow();
@@ -1194,6 +1267,7 @@ void activateManualCommuteSession(bool refreshImmediately) {
 
     if (WiFi.status() == WL_CONNECTED) {
         nextCommuteBusRefreshMs = nowMs;
+        nextCommuteProviderFetchMs = nowMs;
         refreshCommuteBusesNow();
         refreshCommuteForecastNow();
         refreshWeatherNow();
@@ -1212,6 +1286,7 @@ void serviceHomeButton() {
             automaticCommuteSessionModeNow())) {
         Serial.println("Home pressed during automatic commute session: refresh now");
         nextCommuteBusRefreshMs = millis();
+        nextCommuteProviderFetchMs = millis();
         startActiveWifiReconnect();
         return;
     }
@@ -1431,6 +1506,7 @@ void setup() {
         !transitink::isActiveCommuteSession(currentCommuteSessionMode())) {
         Serial.println("Commute session inactive at boot: transport fetch skipped");
         nextCommuteBusRefreshMs = UINT32_MAX;
+        nextCommuteProviderFetchMs = UINT32_MAX;
         nextCommuteForecastRefreshMs = UINT32_MAX;
         enterSleepMode("commute session inactive at boot");
         return;
@@ -1477,6 +1553,7 @@ void loop() {
                     lastCommuteSessionMode ==
                         transitink::CommuteSessionMode::Standby) {
                     nextCommuteBusRefreshMs = millis();
+                    nextCommuteProviderFetchMs = millis();
                     nextPowerTelemetryMs = millis();
                     standbyNetworkStopped = false;
                 }

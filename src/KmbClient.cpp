@@ -48,7 +48,9 @@ std::string toStdString(JsonVariantConst value) {
 
 }  // namespace
 
-bool KmbClient::httpGet(const String& url, String& body, String& error) {
+bool KmbClient::httpGet(const String& url, String& body, String& error,
+                        int16_t* httpStatus) {
+    if (httpStatus != nullptr) *httpStatus = 0;
     WiFiClientSecure tls;
     transitink::configureVerifiedTls(tls);
     HTTPClient http;
@@ -59,6 +61,7 @@ bool KmbClient::httpGet(const String& url, String& body, String& error) {
         return false;
     }
     int code = http.GET();
+    if (httpStatus != nullptr) *httpStatus = static_cast<int16_t>(code);
     if (code != HTTP_CODE_OK) {
         error = String("HTTP 錯誤: ") + code;
         http.end();
@@ -72,7 +75,9 @@ bool KmbClient::httpGet(const String& url, String& body, String& error) {
 bool KmbClient::httpGetBounded(const String& url,
                                std::size_t limit,
                                String& body,
-                               String& error) {
+                               String& error,
+                               int16_t* httpStatus) {
+    if (httpStatus != nullptr) *httpStatus = 0;
     WiFiClientSecure tls;
     transitink::configureVerifiedTls(tls);
     HTTPClient http;
@@ -84,6 +89,7 @@ bool KmbClient::httpGetBounded(const String& url,
     }
     http.addHeader("Accept-Encoding", "identity");
     const int code = http.GET();
+    if (httpStatus != nullptr) *httpStatus = static_cast<int16_t>(code);
     const int expectedLength = http.getSize();
     if (code != HTTP_CODE_OK || expectedLength > static_cast<int>(limit)) {
         error = code == HTTP_CODE_OK ? "路線站牌回應過大" : String("HTTP 錯誤: ") + code;
@@ -341,7 +347,9 @@ bool KmbClient::fetchEtaRecords(const bus_eta::RouteSelection& selection, std::v
 
 bool KmbClient::fetchEtaRecords(const transitink::BusWidgetConfig& config,
                                 std::vector<transitink::BusEtaRecord>& records,
-                                String& error) {
+                                String& error,
+                                transitink::BusEtaResponseInfo* responseInfo) {
+    if (responseInfo != nullptr) *responseInfo = {};
     if (config.operatorId != transitink::BusOperator::Kmb &&
         config.operatorId != transitink::BusOperator::LongWin) {
         records.clear();
@@ -352,7 +360,8 @@ bool KmbClient::fetchEtaRecords(const transitink::BusWidgetConfig& config,
     String body;
     if (!httpGet(toArduino(bus_eta::kmbEtaUrl(config.stopId, config.routeId,
                                               config.serviceType)),
-                 body, error)) {
+                 body, error,
+                 responseInfo == nullptr ? nullptr : &responseInfo->httpStatus)) {
         records.clear();
         Serial.print("KMB ETA fetch failed route=");
         Serial.print(config.routeId.c_str());
@@ -366,7 +375,8 @@ bool KmbClient::fetchEtaRecords(const transitink::BusWidgetConfig& config,
     }
 
     std::string parserError;
-    if (!parseKmbEtaJson(body.c_str(), config, records, parserError)) {
+    if (!parseKmbEtaJson(body.c_str(), config, records, parserError,
+                         responseInfo)) {
         error = parserError.c_str();
         Serial.print("KMB ETA parse failed route=");
         Serial.print(config.routeId.c_str());
@@ -385,7 +395,9 @@ bool KmbClient::fetchEtaRecords(const transitink::BusWidgetConfig& config,
 bool KmbClient::fetchStopEtaRecords(
     const String& stopId,
     std::vector<transitink::BusEtaRecord>& records,
-    String& error) {
+    String& error,
+    transitink::BusEtaResponseInfo* responseInfo) {
+    if (responseInfo != nullptr) *responseInfo = {};
     if (stopId.isEmpty()) {
         records.clear();
         error = "九巴站牌設定不完整";
@@ -394,7 +406,9 @@ bool KmbClient::fetchStopEtaRecords(
 
     String body;
     if (!httpGetBounded(toArduino(bus_eta::kmbStopEtaUrl(stopId.c_str())),
-                        transitink::kMaxCatalogResponseBytes, body, error)) {
+                        transitink::kMaxCatalogResponseBytes, body, error,
+                        responseInfo == nullptr ? nullptr
+                                                : &responseInfo->httpStatus)) {
         records.clear();
         return false;
     }
@@ -403,7 +417,8 @@ bool KmbClient::fetchStopEtaRecords(
     parserConfig.operatorId = transitink::BusOperator::Kmb;
     parserConfig.stopId = stopId.c_str();
     std::string parserError;
-    if (!parseKmbEtaJson(body.c_str(), parserConfig, records, parserError)) {
+    if (!parseKmbEtaJson(body.c_str(), parserConfig, records, parserError,
+                         responseInfo)) {
         records.clear();
         error = parserError.c_str();
         return false;

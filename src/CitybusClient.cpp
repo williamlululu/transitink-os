@@ -36,7 +36,9 @@ private:
 
 }  // namespace
 
-bool CitybusClient::httpGet(const String& url, String& body, String& error) {
+bool CitybusClient::httpGet(const String& url, String& body, String& error,
+                            int16_t* httpStatus) {
+    if (httpStatus != nullptr) *httpStatus = 0;
     WiFiClientSecure tls;
     transitink::configureVerifiedTls(tls);
     HTTPClient http;
@@ -47,6 +49,7 @@ bool CitybusClient::httpGet(const String& url, String& body, String& error) {
         return false;
     }
     const int code = http.GET();
+    if (httpStatus != nullptr) *httpStatus = static_cast<int16_t>(code);
     if (code != HTTP_CODE_OK) {
         error = String("城巴資料服務回應錯誤：") + code;
         http.end();
@@ -319,7 +322,9 @@ bool CitybusClient::fetchStopLabels(
 bool CitybusClient::fetchEtaRecords(
     const transitink::BusWidgetConfig& config,
     std::vector<transitink::BusEtaRecord>& records,
-    String& error) {
+    String& error,
+    transitink::BusEtaResponseInfo* responseInfo) {
+    if (responseInfo != nullptr) *responseInfo = {};
     if (config.operatorId != transitink::BusOperator::Citybus) {
         records.clear();
         error = "城巴營辦商設定不正確";
@@ -339,13 +344,15 @@ bool CitybusClient::fetchEtaRecords(
     String body;
     if (!httpGet(String(kCitybusBase) + "/eta/CTB/" + config.stopId.c_str() + "/" +
                      config.routeId.c_str(),
-                 body, error)) {
+                 body, error,
+                 responseInfo == nullptr ? nullptr : &responseInfo->httpStatus)) {
         records.clear();
         return false;
     }
 
     std::string parserError;
-    if (!parseCitybusEtaJson(body.c_str(), config, records, parserError)) {
+    if (!parseCitybusEtaJson(body.c_str(), config, records, parserError,
+                             responseInfo)) {
         error = parserError.c_str();
         return false;
     }

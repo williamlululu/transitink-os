@@ -37,12 +37,14 @@ bool mapCitybusDirectionPath(const std::string& direction, std::string& path);
 bool parseCitybusEtaJson(const char* json,
                          const transitink::BusWidgetConfig& config,
                          std::vector<transitink::BusEtaRecord>& records,
-                         std::string& error);
+                         std::string& error,
+                         transitink::BusEtaResponseInfo* responseInfo = nullptr);
 
 bool parseKmbEtaJson(const char* json,
                      const transitink::BusWidgetConfig& config,
                      std::vector<transitink::BusEtaRecord>& records,
-                     std::string& error);
+                     std::string& error,
+                     transitink::BusEtaResponseInfo* responseInfo = nullptr);
 
 bool parseTflDirectionsJson(
     const char* json,
