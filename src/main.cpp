@@ -119,24 +119,6 @@ constexpr uint32_t kHomeWakeWifiTimeoutMs = 15000;
 constexpr uint32_t kHomeWakeTimeTimeoutMs = 2000;
 constexpr uint32_t kSleepResumeMarker = 0x54524E53U;
 constexpr bool kCommuteDashboardEnabled = COMMUTE_DASHBOARD_ENABLED != 0;
-const transitink::CommutePlannerSettings kCommutePlannerSettings{
-    COMMUTE_ROUTE_A_WALK_MINUTES,
-    COMMUTE_ROUTE_B_WALK_MINUTES,
-    COMMUTE_BOARDING_BUFFER_MINUTES,
-    COMMUTE_TRANSFER_BUFFER_MINUTES,
-    COMMUTE_106_RIDE_MINUTES,
-    COMMUTE_8P_RIDE_MINUTES,
-    COMMUTE_118_RIDE_MINUTES,
-    COMMUTE_SAFE_ARRIVAL_MARGIN_MINUTES,
-    COMMUTE_MAXIMUM_ETA_AGE_MINUTES,
-    COMMUTE_8P_SERVICE_START_MINUTES,
-    COMMUTE_8P_LAST_POSSIBLE_TRANSFER_MINUTES,
-    COMMUTE_8P_ORIGIN_TO_TRANSFER_MINUTES,
-    COMMUTE_8P_WEEKDAY_EARLY_HEADWAY_END_MINUTES,
-    COMMUTE_8P_WEEKDAY_HEADWAY_END_MINUTES,
-    COMMUTE_8P_WEEKDAY_EARLY_HEADWAY_MINUTES,
-    COMMUTE_8P_WEEKDAY_LATER_HEADWAY_MINUTES,
-};
 RTC_NOINIT_ATTR uint32_t sleepResumeMarker;
 RTC_NOINIT_ATTR uint32_t sleepResumeMarkerInverse;
 
@@ -156,6 +138,8 @@ void refreshCommuteForecastNow(bool render = true);
 void serviceCommuteDashboardIfDue();
 void scheduleNextCommuteBusRefresh();
 void recalculateCommutePlan();
+void commuteLocalTime(time_t epoch, struct tm& result);
+transitink::CommuteDateDecision commuteDateDecisionNow();
 void startHomeWakeRefresh();
 void serviceHomeWakeRefresh();
 void finishHomeWakeRefresh();
@@ -306,6 +290,12 @@ void logCommuteRouteADecision(
 #endif
 }
 
+void commuteLocalTime(time_t epoch, struct tm& result) {
+    // Fixed Hong Kong routes use Hong Kong civil time independent of widget locale.
+    const time_t hongKongClock = epoch + 8 * 3600;
+    gmtime_r(&hongKongClock, &result);
+}
+
 void recalculateCommutePlan() {
     const transitink::CommuteSessionMode mode =
         finalAutomaticUpdateInProgress
@@ -313,20 +303,21 @@ void recalculateCommutePlan() {
             : currentCommuteSessionMode();
     if (!hasValidTime()) {
         transitink::planCommuteDashboard(
-            commuteDashboardSnapshot, 0, 0, false, kCommutePlannerSettings,
+            commuteDashboardSnapshot, 0, 0, false, deviceConfig.commutePlanner,
             mode);
         logCommuteRouteADecision(nullptr);
         return;
     }
     const time_t now = time(nullptr);
     struct tm localNow;
-    localtime_r(&now, &localNow);
-    struct tm target = localNow;
-    target.tm_hour = COMMUTE_TARGET_HOUR;
-    target.tm_min = COMMUTE_TARGET_MINUTE;
-    target.tm_sec = 0;
-    const int64_t targetEpoch = static_cast<int64_t>(mktime(&target));
-    const bool weekday = localNow.tm_wday >= 1 && localNow.tm_wday <= 5;
+    commuteLocalTime(now, localNow);
+    const auto dateDecision = commuteDateDecisionNow();
+    int64_t targetEpoch = 0;
+    if (dateDecision.targetMinutes != UINT16_MAX) {
+        targetEpoch = static_cast<int64_t>(now) - localNow.tm_hour * 3600 -
+            localNow.tm_min * 60 - localNow.tm_sec + dateDecision.targetMinutes * 60;
+    }
+    const bool weekday = dateDecision.serviceWeekday;
     const uint16_t localMinuteOfDay = static_cast<uint16_t>(
         localNow.tm_hour * 60 + localNow.tm_min);
 #if COMMUTE_ROUTE_A_VERBOSE_DIAGNOSTICS
@@ -338,8 +329,12 @@ void recalculateCommutePlan() {
 #endif
     transitink::planCommuteDashboard(
         commuteDashboardSnapshot, static_cast<int64_t>(now), targetEpoch,
-        weekday, kCommutePlannerSettings, mode, localMinuteOfDay,
+        weekday, deviceConfig.commutePlanner, mode, localMinuteOfDay,
         diagnosticsOutput);
+    commuteDashboardSnapshot.intent = dateDecision.intent;
+    commuteDashboardSnapshot.dateHint = dateDecision.hint;
+    commuteDashboardSnapshot.publicHoliday = dateDecision.publicHoliday;
+    commuteDashboardSnapshot.holidayCoverageKnown = dateDecision.holidayCoverageKnown;
     logCommuteRouteADecision(diagnosticsOutput);
 }
 
@@ -638,7 +633,9 @@ void serviceCommuteDashboardIfDue() {
     if (transitink::deadlineReached(nowMs, nextCommuteBusRefreshMs)) {
         startActiveWifiReconnect();
         if (WiFi.status() != WL_CONNECTED) {
-            nextCommuteBusRefreshMs = nowMs + 5000UL;
+            // This path marks failure without changing source timestamps, then
+            // recalculates walking cutoffs/age and renders at the local cadence.
+            refreshCommuteBusesNow();
             return;
         }
         if (transitink::deadlineReached(nowMs,
@@ -832,9 +829,8 @@ bool localScheduleTime(unsigned int& secondOfDay, unsigned int& weekday) {
     }
     const time_t now = time(nullptr);
     struct tm localTime;
-    if (localtime_r(&now, &localTime) == nullptr) {
-        return false;
-    }
+    if (kCommuteDashboardEnabled) commuteLocalTime(now, localTime);
+    else if (localtime_r(&now, &localTime) == nullptr) return false;
     secondOfDay = static_cast<unsigned int>(localTime.tm_hour * 60 * 60 +
                                             localTime.tm_min * 60 +
                                             localTime.tm_sec);
@@ -842,29 +838,30 @@ bool localScheduleTime(unsigned int& secondOfDay, unsigned int& weekday) {
     return true;
 }
 
-transitink::CommuteSessionSettings commuteSessionSettingsFromConfig() {
-    transitink::CommuteSessionSettings settings =
-        transitink::kDefaultCommuteSessionSettings;
+transitink::CommuteDateDecision commuteDateDecisionNow() {
+    transitink::CommuteSessionSettings settings = transitink::kDefaultCommuteSessionSettings;
     settings.automaticStartMinutes = deviceConfig.scheduledWakeStartMinutes;
     settings.automaticEndMinutes = deviceConfig.scheduledWakeEndMinutes;
-    if (!transitink::commuteSessionSettingsValid(settings)) {
-        return transitink::kDefaultCommuteSessionSettings;
-    }
-    return settings;
+    if (!transitink::commuteSessionSettingsValid(settings))
+        settings = transitink::kDefaultCommuteSessionSettings;
+    if (!hasValidTime()) return {};
+    const time_t now = time(nullptr);
+    struct tm localNow;
+    commuteLocalTime(now, localNow);
+    const uint32_t date = (localNow.tm_year + 1900) * 10000U +
+        (localNow.tm_mon + 1) * 100U + localNow.tm_mday;
+    return transitink::resolveCommuteDate(deviceConfig.commuteDates, date,
+        localNow.tm_wday, localNow.tm_hour * 3600U + localNow.tm_min * 60U + localNow.tm_sec,
+        deviceConfig.scheduledWakeEnabled, settings);
+}
+
+transitink::CommuteSessionSettings commuteSessionSettingsFromConfig() {
+    return commuteDateDecisionNow().phases;
 }
 
 transitink::CommuteSessionMode automaticCommuteSessionModeNow() {
-    if (!kCommuteDashboardEnabled || !deviceConfig.scheduledWakeEnabled) {
-        return transitink::CommuteSessionMode::Standby;
-    }
-    unsigned int secondOfDay = 0;
-    unsigned int weekday = 0;
-    if (!localScheduleTime(secondOfDay, weekday)) {
-        return transitink::CommuteSessionMode::Standby;
-    }
-    return transitink::automaticCommuteSessionMode(
-        commuteSessionSettingsFromConfig(), static_cast<uint8_t>(weekday),
-        secondOfDay);
+    return kCommuteDashboardEnabled ? commuteDateDecisionNow().automaticMode
+                                   : transitink::CommuteSessionMode::Standby;
 }
 
 bool manualCommuteSessionActiveNow() {
@@ -909,11 +906,37 @@ unsigned long long scheduledWakeDelayUs() {
             commuteSettings.automaticStartMinutes;
         settings.scheduledWakeEndMinutes = commuteSettings.automaticEndMinutes;
     }
-    const unsigned int delaySeconds = kCommuteDashboardEnabled
-        ? bus_eta::secondsUntilWeekdayScheduledWakeStart(
-              settings, secondOfDay, weekday)
-        : bus_eta::secondsUntilScheduledWakeStart(settings, secondOfDay);
-    return static_cast<unsigned long long>(delaySeconds) * 1000000ULL;
+    if (kCommuteDashboardEnabled && deviceConfig.scheduledWakeEnabled) {
+        const time_t now = time(nullptr);
+        struct tm localNow;
+        commuteLocalTime(now, localNow);
+        auto basePhases = transitink::kDefaultCommuteSessionSettings;
+        basePhases.automaticStartMinutes = deviceConfig.scheduledWakeStartMinutes;
+        basePhases.automaticEndMinutes = deviceConfig.scheduledWakeEndMinutes;
+        if (!transitink::commuteSessionSettingsValid(basePhases))
+            basePhases = transitink::kDefaultCommuteSessionSettings;
+        for (int offset = 0; offset <= 7; ++offset) {
+            const time_t midnight = now - localNow.tm_hour * 3600 -
+                localNow.tm_min * 60 - localNow.tm_sec + offset * 86400;
+            struct tm day;
+            commuteLocalTime(midnight, day);
+            const uint32_t date = (day.tm_year + 1900) * 10000U +
+                (day.tm_mon + 1) * 100U + day.tm_mday;
+            const auto decision = transitink::resolveCommuteDate(
+                deviceConfig.commuteDates, date, day.tm_wday, 0, true,
+                basePhases);
+            const auto start = decision.phases.automaticStartMinutes;
+            const auto atStart = transitink::resolveCommuteDate(
+                deviceConfig.commuteDates, date, day.tm_wday, start * 60U, true,
+                decision.phases);
+            const int64_t delay = static_cast<int64_t>(midnight) + start * 60 - now;
+            if (delay > 0 && transitink::isAutomaticCommuteSession(atStart.automaticMode))
+                return static_cast<unsigned long long>(delay) * 1000000ULL;
+        }
+        return 24ULL * 3600 * 1000000ULL;
+    }
+    return static_cast<unsigned long long>(
+        bus_eta::secondsUntilScheduledWakeStart(settings, secondOfDay)) * 1000000ULL;
 }
 
 void stopNetworkForSleep() {
@@ -981,8 +1004,9 @@ void returnFromLightSleep(bool manualWake) {
     serviceChargeStatus(true);
     einkDisplay.begin(false);
     sleepScreenPrepared = false;
-    if (manualWake && kCommuteDashboardEnabled) {
-        activateManualCommuteSession(false);
+    if (kCommuteDashboardEnabled) {
+        activeCommutePage = 0;
+        if (manualWake) activateManualCommuteSession(false);
     }
     startHomeWakeRefresh();
 }
@@ -1221,13 +1245,13 @@ void serviceWidgetPageButton() {
         factoryResetPendingRestart) {
         return;
     }
-    if (configAccessMode || !dashboardVisible) {
-        transitink::hardware::clearPendingWidgetPageClick();
-        return;
-    }
-
     if (kCommuteDashboardEnabled) {
-        activeCommutePage = static_cast<uint8_t>((activeCommutePage + 1) % 2);
+        if (!hasUsableConfig(deviceConfig)) return;
+        if (configAccessMode) configPortal.stop();
+        configAccessMode = false;
+        dashboardVisible = true;
+        activateManualCommuteSession(false);
+        activeCommutePage = 1;
         Serial.print("Commute dashboard page changed to: ");
         Serial.println(static_cast<unsigned int>(activeCommutePage) + 1);
         showActiveCommuteDashboard();
@@ -1277,20 +1301,17 @@ void activateManualCommuteSession(bool refreshImmediately) {
 }
 
 void serviceHomeButton() {
-    if (!transitink::hardware::takeHomePress() ||
-        factoryResetPendingRestart || configAccessMode ||
-        !kCommuteDashboardEnabled) {
-        return;
-    }
-    if (transitink::isAutomaticCommuteSession(
-            automaticCommuteSessionModeNow())) {
-        Serial.println("Home pressed during automatic commute session: refresh now");
-        nextCommuteBusRefreshMs = millis();
-        nextCommuteProviderFetchMs = millis();
-        startActiveWifiReconnect();
-        return;
-    }
-    activateManualCommuteSession(true);
+    if (!transitink::hardware::takeHomePress() || factoryResetPendingRestart ||
+        !kCommuteDashboardEnabled || !hasUsableConfig(deviceConfig)) return;
+    if (configAccessMode) configPortal.stop();
+    configAccessMode = false;
+    dashboardVisible = true;
+    activeCommutePage = 0;
+    activateManualCommuteSession(false);
+    // Render cached state immediately, before any reconnect or provider work.
+    showActiveCommuteDashboard();
+    nextCommuteBusRefreshMs = millis();
+    startActiveWifiReconnect();
 }
 
 void serviceAutomaticFinalUpdate() {
@@ -1305,13 +1326,12 @@ void serviceAutomaticFinalUpdate() {
     const transitink::CommuteSessionSettings settings =
         commuteSessionSettingsFromConfig();
     if (!localScheduleTime(secondOfDay, weekday) ||
-        !transitink::isWeekday(static_cast<uint8_t>(weekday)) ||
         secondOfDay < static_cast<unsigned int>(settings.automaticEndMinutes) *
                           60U) {
         return;
     }
 
-    Serial.println("Automatic commute session final 07:30 status update");
+    Serial.println("Automatic commute session final status update");
     finalAutomaticUpdateInProgress = true;
     startActiveWifiReconnect();
     activeCommutePage = 0;
@@ -1442,7 +1462,8 @@ void setup() {
     }
 
     widgetScheduler.configure(deviceConfig.widgets, millis());
-    if (activeCommutePage > 1) activeCommutePage = 0;
+    // Cold/scheduled/Home boot always starts the bus page.
+    activeCommutePage = 0;
     if (!transitink::widgetPageHasEnabled(deviceConfig.widgets,
                                           activeWidgetPage)) {
         activeWidgetPage = static_cast<uint8_t>(
@@ -1564,7 +1585,7 @@ void loop() {
                     automaticFinalUpdateComplete = false;
                 }
                 scheduledWakeSession = true;
-                manualCommuteSessionStarted = false;
+                // A recent Home press keeps its manual deadline after this window ends.
             }
             if (scheduledWakeSession &&
                 mode == transitink::CommuteSessionMode::Standby &&

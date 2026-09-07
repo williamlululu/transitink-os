@@ -1,4 +1,5 @@
 #include "PortalConfigCodec.h"
+#include "CommuteConfigCodec.h"
 
 #include <ArduinoJson.h>
 
@@ -85,6 +86,7 @@ bool encodePortalConfig(const DeviceConfig& config,
     doc["firmware_version"] = firmwareVersion;
     doc["csrf_token"] = csrfToken;
 
+    writeCommuteConfig(doc.createNestedObject("commute"), config);
     JsonArray widgets = doc.createNestedArray("widgets");
     for (const auto& widget : config.widgets) {
         writeWidget(widgets.createNestedObject(), widget);
@@ -126,6 +128,10 @@ bool decodePortalSave(const String& body,
         return false;
     }
 
+    // Older clients omit this extension; preserve private date/profile settings.
+    if (!doc.containsKey("commute")) {
+        writeCommuteConfig(doc.createNestedObject("commute"), current);
+    }
     JsonVariant password = doc["wifi_password"];
     if (!password.isNull() && !password.is<const char*>()) {
         error = "Wi-Fi 密碼格式錯誤";

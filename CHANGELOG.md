@@ -2,6 +2,24 @@
 
 All notable user-visible changes to TransitInk OS will be documented here.
 
+## 1.3.0 - candidate (not published)
+
+- Preserve distinct KMB/Citybus ETA rows and their original timestamps; retain
+  up to twelve useful candidates, source freshness and retry state separately.
+- Apply an explicitly provisional 12/17-minute early-weekday model per leg;
+  retain 17/27/35-minute uncalibrated fallback outside that band. Show advisory
+  slow-first-leg/early-connection risk without changing official ETA.
+- Separate Scheduled, single-date Special and target-free Leave-now journeys.
+  Keep first-leg and later fallback evidence when the connection is pending.
+- Add opt-in private date hints and one-day targets through authenticated
+  settings, separate official public holidays from personal attendance, and
+  preserve old configuration and credentials through migration.
+- Make Home always select buses, the down key select weather, and offline
+  recalculation continue without extending boarding deadlines.
+- Accept a valid tomorrow-first forecast and render the production firmware
+  layout in host previews; current conditions, daily rain probability and
+  unavailable commute-specific forecasts remain explicitly separated.
+
 ## 1.2.3 - 2026-09-04
 
 - Fixed Route A disappearing when the live 8P response ends before the

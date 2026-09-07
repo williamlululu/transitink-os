@@ -1,4 +1,5 @@
 import os
+import sys
 import subprocess
 import unittest
 from pathlib import Path
@@ -19,12 +20,45 @@ GMB_PROVIDER_TEST_BIN = BUILD_DIR / "test_gmb_provider"
 JOURNEY_TIME_XML_TEST_BIN = BUILD_DIR / "test_journey_time_xml"
 JOURNEY_TIME_PROVIDER_TEST_BIN = BUILD_DIR / "test_journey_time_provider"
 JOURNEY_TIME_CLIENT_TEST_BIN = BUILD_DIR / "test_journey_time_client"
+COMMUTE_BUS_TEST_BIN = BUILD_DIR / "test_commute_bus_core"
 YXML_OBJECT = BUILD_DIR / "yxml.o"
 YXML_CLIENT_OBJECT = BUILD_DIR / "yxml_client.o"
 NATIVE_CONFIG = ROOT / "platformio.native.ini"
+# CI installs PlatformIO inside .venv; desktop tasks may reuse an existing Python.
+LOCAL_PYTHON = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+PIO_PYTHON = str(LOCAL_PYTHON) if LOCAL_PYTHON.is_file() else sys.executable
 
 
 class CoreBehaviorTests(unittest.TestCase):
+    def test_commute_bus_source_freshness_and_candidates(self):
+        BUILD_DIR.mkdir(exist_ok=True)
+        cmd = [
+            "c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-Iinclude",
+            "src/core/CommuteBusCore.cpp", "src/core/CommuteDashboardCore.cpp",
+            "src/core/BusEtaCore.cpp", "test_host/test_commute_bus_core.cpp",
+            "-o", str(COMMUTE_BUS_TEST_BIN),
+        ]
+        subprocess.run(cmd, cwd=ROOT, check=True)
+        subprocess.run([str(COMMUTE_BUS_TEST_BIN)], cwd=ROOT, check=True)
+
+    def test_commute_planner_native_behaviors(self):
+        env = os.environ.copy()
+        env.setdefault("PLATFORMIO_CORE_DIR", str(ROOT / ".platformio"))
+        subprocess.run(
+            [PIO_PYTHON, "-m", "platformio", "test", "-c", str(NATIVE_CONFIG),
+             "-e", "native_commute", "-f", "test_commute_planner"],
+            cwd=ROOT, env=env, check=True,
+        )
+
+    def test_hko_forecast_native_behaviors(self):
+        env = os.environ.copy()
+        env.setdefault("PLATFORMIO_CORE_DIR", str(ROOT / ".platformio"))
+        subprocess.run(
+            [PIO_PYTHON, "-m", "platformio", "test", "-c", str(NATIVE_CONFIG),
+             "-e", "native_hko_forecast", "-f", "test_hko_forecast_parser"],
+            cwd=ROOT, env=env, check=True,
+        )
+
     def test_selected_board_profile_cpp_contract(self):
         BUILD_DIR.mkdir(exist_ok=True)
         cmd = [
@@ -44,9 +78,9 @@ class CoreBehaviorTests(unittest.TestCase):
 
     def test_app_config_native_behaviors(self):
         env = os.environ.copy()
-        env["PLATFORMIO_CORE_DIR"] = str(ROOT / ".platformio")
+        env.setdefault("PLATFORMIO_CORE_DIR", str(ROOT / ".platformio"))
         cmd = [
-            str(ROOT / ".venv/bin/platformio"),
+            PIO_PYTHON, "-m", "platformio",
             "test",
             "-c",
             str(NATIVE_CONFIG),
@@ -59,10 +93,10 @@ class CoreBehaviorTests(unittest.TestCase):
 
     def test_json_native_behaviors(self):
         env = os.environ.copy()
-        env["PLATFORMIO_CORE_DIR"] = str(ROOT / ".platformio")
+        env.setdefault("PLATFORMIO_CORE_DIR", str(ROOT / ".platformio"))
         for test_filter in ("test_transit_json_parsers", "test_widget_catalog"):
             cmd = [
-                str(ROOT / ".venv/bin/platformio"),
+                PIO_PYTHON, "-m", "platformio",
                 "test",
                 "-c",
                 str(NATIVE_CONFIG),

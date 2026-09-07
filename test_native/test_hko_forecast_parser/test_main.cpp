@@ -80,11 +80,11 @@ void test_unusable_clock_falls_back_to_official_update_date() {
 void test_malformed_days_after_required_six_are_ignored() {
     std::string json = loadFixture();
     const std::size_t extraDay =
-        json.find("\"forecastDate\":\"20260909\"");
+        json.find("\"forecastDate\":\"20260908\"");
     TEST_ASSERT_NOT_EQUAL(std::string::npos, extraDay);
-    const std::size_t extraValue = json.find("\"value\":31", extraDay);
+    const std::size_t extraValue = json.find("\"value\":32", extraDay);
     TEST_ASSERT_NOT_EQUAL(std::string::npos, extraValue);
-    json.replace(extraValue, std::string("\"value\":31").size(),
+    json.replace(extraValue, std::string("\"value\":32").size(),
                  "\"value\":131");
 
     transitink::ForecastSnapshot snapshot;
@@ -95,16 +95,34 @@ void test_malformed_days_after_required_six_are_ignored() {
     TEST_ASSERT_EQUAL_UINT8(7, snapshot.days[5].day);
 }
 
-void test_missing_today_is_rejected_without_mutating_destination() {
+void test_tomorrow_first_is_valid_and_preserves_actual_dates() {
     std::string json = loadFixture();
     const std::string rowStart =
         "{\"forecastDate\":\"20260902\"";
     const std::size_t begin = json.find(rowStart);
     TEST_ASSERT_NOT_EQUAL(std::string::npos, begin);
-    const std::size_t end = json.find("},\n    {", begin);
+    const std::size_t end = json.find("\n    {", begin);
     TEST_ASSERT_NOT_EQUAL(std::string::npos, end);
-    json.erase(begin, end + 2 - begin);
+    json.erase(begin, end + 1 - begin);
 
+    transitink::ForecastSnapshot snapshot;
+    std::string error;
+    TEST_ASSERT_TRUE(transitink::parseHkoForecastJson(
+        json.c_str(), kNoonOnSeptemberSecondHkt, snapshot, error));
+    TEST_ASSERT_TRUE(snapshot.valid);
+    TEST_ASSERT_EQUAL_UINT32(6, snapshot.dayCount);
+    TEST_ASSERT_EQUAL_UINT8(3, snapshot.days[0].day);
+    TEST_ASSERT_EQUAL_UINT8(8, snapshot.days[5].day);
+    TEST_ASSERT_EQUAL_STRING("", error.c_str());
+}
+
+void test_missing_middle_day_rejected_without_mutating_destination() {
+    std::string json = loadFixture();
+    const std::size_t begin = json.find("{\"forecastDate\":\"20260904\"");
+    TEST_ASSERT_NOT_EQUAL(std::string::npos, begin);
+    const std::size_t end = json.find("\n    {", begin);
+    TEST_ASSERT_NOT_EQUAL(std::string::npos, end);
+    json.erase(begin, end + 1 - begin);
     transitink::ForecastSnapshot snapshot;
     snapshot.valid = true;
     snapshot.locationTc = "保留";
@@ -112,8 +130,7 @@ void test_missing_today_is_rejected_without_mutating_destination() {
     std::string error;
     TEST_ASSERT_FALSE(transitink::parseHkoForecastJson(
         json.c_str(), kNoonOnSeptemberSecondHkt, snapshot, error));
-    TEST_ASSERT_EQUAL_STRING("天文台預報未包含由今日起完整六日",
-                              error.c_str());
+    TEST_ASSERT_EQUAL_STRING("天文台預報未包含今日或明日起連續六日", error.c_str());
     TEST_ASSERT_TRUE(snapshot.valid);
     TEST_ASSERT_EQUAL_STRING("保留", snapshot.locationTc.c_str());
     TEST_ASSERT_EQUAL_UINT32(1, snapshot.dayCount);
@@ -179,7 +196,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_condition_and_psr_labels_use_traditional_chinese);
     RUN_TEST(test_unusable_clock_falls_back_to_official_update_date);
     RUN_TEST(test_malformed_days_after_required_six_are_ignored);
-    RUN_TEST(test_missing_today_is_rejected_without_mutating_destination);
+    RUN_TEST(test_tomorrow_first_is_valid_and_preserves_actual_dates);
+    RUN_TEST(test_missing_middle_day_rejected_without_mutating_destination);
     RUN_TEST(test_malformed_values_and_update_time_are_rejected);
     RUN_TEST(test_refresh_failure_preserves_only_a_complete_valid_cache);
     return UNITY_END();

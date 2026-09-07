@@ -639,6 +639,165 @@ void test_firmware_update_metadata_is_strictly_validated() {
     TEST_ASSERT_FALSE(transitink::isSha256Digest(std::string(64, 'A')));
 }
 
+
+void test_commute_dates_modes_and_shifted_special_expiry() {
+    using namespace transitink;
+    CommuteDateSettings s;
+    auto d = resolveCommuteDate(s, 20260106, 2, 6 * 3600, true);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::Scheduled);
+    TEST_ASSERT_EQUAL_UINT16(445, d.targetMinutes);
+    TEST_ASSERT_TRUE(d.serviceWeekday);
+    d = resolveCommuteDate(s, 20260110, 6, 15 * 3600, true);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::LeaveNow);
+    TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, d.targetMinutes);
+    s.specialDate = 20260110;
+    s.specialTargetMinutes = 540;
+    d = resolveCommuteDate(s, 20260110, 6, 8 * 3600 + 15 * 60, true);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::Special);
+    TEST_ASSERT_TRUE(d.automaticMode == CommuteSessionMode::AutomaticRapid);
+    TEST_ASSERT_EQUAL_UINT16(455, d.phases.automaticStartMinutes);
+    TEST_ASSERT_EQUAL_UINT16(525, d.phases.recoveryStartMinutes);
+    TEST_ASSERT_EQUAL_UINT16(545, d.phases.automaticEndMinutes);
+    d = resolveCommuteDate(s, 20260110, 6, 545 * 60, true);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::LeaveNow);
+    d = resolveCommuteDate(s, 20260112, 1, 400 * 60, true);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::Scheduled);
+    TEST_ASSERT_EQUAL_UINT16(445, d.targetMinutes);
+    TEST_ASSERT_EQUAL_UINT16(360, d.phases.automaticStartMinutes);
+}
+void test_calendar_hint_is_information_only_and_service_day_independent() {
+    using namespace transitink;
+    CommuteDateSettings s;
+    s.calendarCount = 1;
+    s.calendar[0] = {20260106, 20260110, "Synthetic optional event", false};
+    auto d = resolveCommuteDate(s, 20260106, 2, 400 * 60, true);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::Scheduled);
+    TEST_ASSERT_EQUAL_STRING("Synthetic optional event", d.hint.c_str());
+    s.calendar[0].pauseAutomatic = true;
+    d = resolveCommuteDate(s, 20260106, 2, 400 * 60, true);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::LeaveNow);
+    TEST_ASSERT_TRUE(d.serviceWeekday);
+    // Official Monday holiday, distinct from any private school event.
+    d = resolveCommuteDate(s, 20260406, 1, 400 * 60, true);
+    TEST_ASSERT_TRUE(d.publicHoliday);
+    TEST_ASSERT_FALSE(d.serviceWeekday);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::LeaveNow);
+    s.specialDate = 20260406;
+    d = resolveCommuteDate(s, 20260406, 1, 500 * 60, true);
+    TEST_ASSERT_TRUE(d.intent == CommuteIntent::Special);
+    TEST_ASSERT_FALSE(d.serviceWeekday);
+    d = resolveCommuteDate(s, 20300107, 1, 400 * 60, true);
+    TEST_ASSERT_FALSE(d.holidayCoverageKnown);
+    TEST_ASSERT_FALSE(d.serviceWeekday);
+}
+void test_commute_extension_roundtrip_old_client_and_invalid_input() {
+    DeviceConfig config = roundTripConfig();
+    config.commuteDates.specialDate = 20260110;
+    config.commuteDates.calendarCount = 1;
+    config.commuteDates.calendar[0] = {20260106, 20260110, "Synthetic note", false};
+    config.commutePlanner.route106EarlyRideMinutes = 13;
+    String encoded = serializeDeviceConfigJson(config), error;
+    DeviceConfig parsed;
+    TEST_ASSERT_TRUE(parseDeviceConfigJson(encoded, parsed, error));
+    TEST_ASSERT_EQUAL_UINT32(20260110, parsed.commuteDates.specialDate);
+    TEST_ASSERT_EQUAL_UINT16(13, parsed.commutePlanner.route106EarlyRideMinutes);
+    TEST_ASSERT_EQUAL_STRING(config.wifiPassword.c_str(), parsed.wifiPassword.c_str());
+    StaticJsonDocument<transitink::kConfigJsonCapacity> doc;
+    TEST_ASSERT_FALSE(deserializeJson(doc, encoded));
+    doc.remove("commute");
+    doc["wifi_password"] = "";
+    String oldClient;
+    serializeJson(doc, oldClient);
+    TEST_ASSERT_TRUE(decodePortalSave(oldClient, config, parsed, error));
+    TEST_ASSERT_EQUAL_UINT32(20260110, parsed.commuteDates.specialDate);
+    TEST_ASSERT_EQUAL_STRING("Synthetic note", parsed.commuteDates.calendar[0].label.c_str());
+    TEST_ASSERT_EQUAL_STRING(config.wifiPassword.c_str(), parsed.wifiPassword.c_str());
+    // Old firmware config migration adds defaults, no private calendar embedded.
+    doc["wifi_password"] = "synthetic-secret";
+    String oldFirmware;
+    serializeJson(doc, oldFirmware);
+    TEST_ASSERT_TRUE(parseDeviceConfigJson(oldFirmware, parsed, error));
+    TEST_ASSERT_EQUAL_UINT32(0, parsed.commuteDates.specialDate);
+    TEST_ASSERT_EQUAL_UINT16(0, parsed.commuteDates.calendarCount);
+    TEST_ASSERT_EQUAL_UINT16(12, parsed.commutePlanner.route106EarlyRideMinutes);
+    doc["commute"]["special_date"] = 20260230;
+    String invalid;
+    serializeJson(doc, invalid);
+    TEST_ASSERT_FALSE(parseDeviceConfigJson(invalid, parsed, error));
+    TEST_ASSERT_EQUAL_UINT32(0, parsed.commuteDates.specialDate);
+    doc["commute"]["special_date"] = 0;
+    doc["commute"]["early_106_minutes"] = -1;
+    invalid = ""; serializeJson(doc, invalid);
+    TEST_ASSERT_FALSE(parseDeviceConfigJson(invalid, parsed, error));
+    doc["commute"]["early_106_minutes"] = 20;
+    doc["commute"]["risk_106_minutes"] = 15;
+    invalid = ""; serializeJson(doc, invalid);
+    TEST_ASSERT_FALSE(parseDeviceConfigJson(invalid, parsed, error));
+}
+
+void test_invalid_in_memory_commute_profile_cannot_replace_saved_config() {
+    using Settings = transitink::CommutePlannerSettings;
+    struct InvalidCase { uint16_t Settings::*member; uint16_t value; };
+    const InvalidCase invalidCases[] = {
+        {&Settings::route106EarlyRideMinutes, 0},
+        {&Settings::route106EarlyRideMinutes, 61},
+        {&Settings::route8pEarlyRideMinutes, 0},
+        {&Settings::route8pEarlyRideMinutes, 91},
+        {&Settings::route106RiskRideMinutes, 0},
+        {&Settings::route106RiskRideMinutes, 91},
+        {&Settings::route8pRiskRideMinutes, 0},
+        {&Settings::route8pRiskRideMinutes, 121},
+        {&Settings::connectionEarlyAllowanceMinutes, 16},
+        // In-range values still fail if risk is shorter than the estimate.
+        {&Settings::route106RiskRideMinutes, 11},
+        {&Settings::route8pRiskRideMinutes, 16},
+    };
+    ConfigStore store;
+    TEST_ASSERT_TRUE(store.begin());
+    const String savedJson = serializeDeviceConfigJson(roundTripConfig());
+    TEST_ASSERT_FALSE(savedJson.empty());
+    for (const auto& bad : invalidCases) {
+        DeviceConfig config = roundTripConfig();
+        config.commutePlanner.*(bad.member) = bad.value;
+        // Disabling the profile does not make an invalid persisted value safe.
+        config.commutePlanner.earlyProfileEnabled = false;
+        String encoded = "sentinel", error;
+        DeviceConfigSerializationMetrics metrics;
+        TEST_ASSERT_FALSE(hasUsableConfig(config));
+        TEST_ASSERT_FALSE(serializeDeviceConfigJsonChecked(config, encoded, metrics, error));
+        TEST_ASSERT_TRUE(encoded.empty());
+        TEST_ASSERT_EQUAL_STRING("通勤試用參數無效", error.c_str());
+        TEST_ASSERT_EQUAL_UINT16(bad.value, config.commutePlanner.*(bad.member));
+        Preferences::seedTestValue(savedJson);
+        TEST_ASSERT_FALSE(store.save(config));
+        TEST_ASSERT_EQUAL_STRING(savedJson.c_str(), Preferences::testValue().c_str());
+        TEST_ASSERT_EQUAL_UINT32(0, Preferences::testWriteCount());
+    }
+}
+
+void test_commute_profile_boundary_values_survive_serialization_without_clamping() {
+    for (const bool upperBoundary : {false, true}) {
+        DeviceConfig config = roundTripConfig();
+        auto& p = config.commutePlanner;
+        p.route106EarlyRideMinutes = upperBoundary ? 60 : 1;
+        p.route8pEarlyRideMinutes = upperBoundary ? 90 : 1;
+        p.route106RiskRideMinutes = upperBoundary ? 90 : 1;
+        p.route8pRiskRideMinutes = upperBoundary ? 120 : 1;
+        p.connectionEarlyAllowanceMinutes = upperBoundary ? 15 : 0;
+        TEST_ASSERT_TRUE(hasUsableConfig(config));
+        String encoded, error;
+        DeviceConfigSerializationMetrics metrics;
+        TEST_ASSERT_TRUE(serializeDeviceConfigJsonChecked(config, encoded, metrics, error));
+        DeviceConfig loaded;
+        TEST_ASSERT_TRUE(parseDeviceConfigJson(encoded, loaded, error));
+        TEST_ASSERT_EQUAL_UINT16(p.route106EarlyRideMinutes, loaded.commutePlanner.route106EarlyRideMinutes);
+        TEST_ASSERT_EQUAL_UINT16(p.route8pEarlyRideMinutes, loaded.commutePlanner.route8pEarlyRideMinutes);
+        TEST_ASSERT_EQUAL_UINT16(p.route106RiskRideMinutes, loaded.commutePlanner.route106RiskRideMinutes);
+        TEST_ASSERT_EQUAL_UINT16(p.route8pRiskRideMinutes, loaded.commutePlanner.route8pRiskRideMinutes);
+        TEST_ASSERT_EQUAL_UINT16(p.connectionEarlyAllowanceMinutes, loaded.commutePlanner.connectionEarlyAllowanceMinutes);
+    }
+}
+
 }  // namespace
 
 void setUp() {}
@@ -646,6 +805,11 @@ void tearDown() {}
 
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_commute_dates_modes_and_shifted_special_expiry);
+    RUN_TEST(test_calendar_hint_is_information_only_and_service_day_independent);
+    RUN_TEST(test_commute_extension_roundtrip_old_client_and_invalid_input);
+    RUN_TEST(test_invalid_in_memory_commute_profile_cannot_replace_saved_config);
+    RUN_TEST(test_commute_profile_boundary_values_survive_serialization_without_clamping);
     RUN_TEST(test_has_usable_config_requires_valid_complete_schema);
     RUN_TEST(test_v3_round_trip_uses_exact_active_payloads);
     RUN_TEST(test_v2_four_slot_config_migrates_and_defaults_to_traditional_chinese);

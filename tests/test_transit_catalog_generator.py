@@ -1,3 +1,4 @@
+import sys
 import gzip
 import hashlib
 import importlib.util
@@ -220,7 +221,7 @@ class TransitCatalogGeneratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             completed = subprocess.run(
                 [
-                    str(ROOT / ".venv/bin/python"),
+                    sys.executable,
                     str(SCRIPT),
                     "--check",
                     "--cache-dir",

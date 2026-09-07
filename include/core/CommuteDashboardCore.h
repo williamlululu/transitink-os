@@ -6,11 +6,14 @@
 #include <string>
 
 #include "core/CommuteSessionCore.h"
+#include "core/CommuteDateCore.h"
 
 namespace transitink {
 
 constexpr std::size_t kCommuteEtaStreamCount = 3;
-constexpr std::size_t kCommuteEtaCount = 3;
+// Joint routes may provide several distinct buses from each operator. Keep a
+// bounded planning horizon independently of the three rows shown on screen.
+constexpr std::size_t kCommuteEtaCount = 12;
 constexpr std::size_t kForecastDayCount = 6;
 constexpr uint16_t kUnknownCommuteLocalMinute = UINT16_MAX;
 constexpr std::size_t kCommuteTransferPairTraceCount =
@@ -70,8 +73,25 @@ enum class CommuteTransferPairOutcome : uint8_t {
     AcceptedLive,
 };
 
+struct CommuteEtaSourceSnapshot {
+    int64_t fetchedAtEpoch = 0;
+    int64_t generatedAtEpoch = 0;
+    int64_t dataAtEpoch = 0;
+    bool succeeded = false;
+};
+
 struct CommuteEtaSnapshot {
+    // Source slots are Citybus then KMB, independent of BusOperator enum values.
+    std::array<CommuteEtaSourceSnapshot, 2> sources{};
     std::array<int64_t, kCommuteEtaCount> epochs{};
+    std::array<int64_t, kCommuteEtaCount> evidenceEpochs{};
+    std::array<int64_t, kCommuteEtaCount> rowFetchedAtEpochs{};
+    std::array<int64_t, kCommuteEtaCount> rowGeneratedAtEpochs{};
+    std::array<int64_t, kCommuteEtaCount> rowDataAtEpochs{};
+    std::array<uint8_t, kCommuteEtaCount> operators{};
+    std::array<uint8_t, kCommuteEtaCount> etaSequences{};
+    std::array<bool, kCommuteEtaCount> scheduled{};
+    std::array<bool, kCommuteEtaCount> rowStale{};
     std::size_t count = 0;
     int64_t fetchedAtEpoch = 0;
     int64_t sourceGeneratedAtEpoch = 0;
@@ -92,12 +112,24 @@ struct CommuteTripEstimate {
     bool firstLegValid = false;
     bool connectionConfirmed = false;
     bool provisional = false;
+    bool staleEvidence = false;
+    bool firstLegScheduled = false;
+    bool connectionScheduled = false;
+    // These engineering assumptions affect ride estimates and advisory risk;
+    // they never change the original provider ETA in firstBus/connectionEpoch.
+    bool firstLegEarlyProfile = false;
+    bool connectionEarlyProfile = false;
+    bool connectionAtRisk = false;
+    uint16_t firstLegRideMinutes = 0;
+    uint16_t connectionRideMinutes = 0;
     int64_t leaveHomeEpoch = 0;
     int64_t firstBusEpoch = 0;
     int64_t transferArrivalEpoch = 0;
     int64_t transferReadyEpoch = 0;
     int64_t connectionEpoch = 0;
     int64_t arrivalEpoch = 0;
+    int64_t riskTransferReadyEpoch = 0;
+    int64_t riskArrivalEpoch = 0;
     int16_t transferMarginMinutes = -1;
 };
 
@@ -112,6 +144,7 @@ struct CommuteRouteAStatus {
     CommuteRouteAState state = CommuteRouteAState::DataUnavailable;
     CommuteRouteAReason reason = CommuteRouteAReason::None;
     int64_t live8pHorizonEpoch = 0;
+    int64_t next8pEpoch = 0;
     bool timetableUsed = false;
 };
 
@@ -137,6 +170,12 @@ struct CommutePlannerSettings {
     uint16_t route106RideMinutes = 17;
     uint16_t route8pRideMinutes = 27;
     uint16_t route118RideMinutes = 35;
+    bool earlyProfileEnabled = true;
+    uint16_t route106EarlyRideMinutes = 12;
+    uint16_t route8pEarlyRideMinutes = 17;
+    uint16_t route106RiskRideMinutes = 15;
+    uint16_t route8pRiskRideMinutes = 20;
+    uint16_t connectionEarlyAllowanceMinutes = 3;
     uint16_t safeArrivalMarginMinutes = 5;
     uint16_t maximumEtaAgeMinutes = 3;
     uint16_t route8pServiceStartMinutes = 6 * 60 + 5;
@@ -180,6 +219,10 @@ struct CommuteDashboardSnapshot {
     int64_t targetEpoch = 0;
     int64_t updatedAtEpoch = 0;
     bool weekday = false;
+    CommuteIntent intent = CommuteIntent::LeaveNow;
+    std::string dateHint;
+    bool publicHoliday = false;
+    bool holidayCoverageKnown = false;
     CommuteSessionMode sessionMode = CommuteSessionMode::Standby;
     CommuteDataQuality dataQuality = CommuteDataQuality::Unavailable;
 };
@@ -229,6 +272,11 @@ void planCommuteDashboard(CommuteDashboardSnapshot& dashboard,
 
 const char* commuteRouteAStateId(CommuteRouteAState state);
 const char* commuteRouteAReasonId(CommuteRouteAReason reason);
+
+// Call on private persisted overrides too. Invalid values are bounded before
+// calculations; risk ride times cannot be below their expected early profile.
+CommutePlannerSettings sanitizeCommutePlannerSettings(
+    const CommutePlannerSettings& settings);
 
 uint16_t calibratedJourneyMinutes(uint16_t rawMinutes,
                                   uint8_t scalePercent,

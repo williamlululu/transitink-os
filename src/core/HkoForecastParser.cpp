@@ -425,6 +425,15 @@ bool parseHkoForecastJson(const char* json,
         return false;
     }
 
+    // The official nine-day product may start tomorrow. Keep actual dates,
+    // and require a contiguous six-day window starting today or tomorrow.
+    bool includesToday = false;
+    for (JsonObjectConst item : rows) {
+        ParsedDate date;
+        if (parseForecastDate(item["forecastDate"].as<const char*>(), date) &&
+            date.serialDay == referenceDay) includesToday = true;
+    }
+    const int64_t firstForecastDay = referenceDay + (includesToday ? 0 : 1);
     std::array<ForecastDay, kForecastDayCount> forecastDays{};
     std::array<bool, kForecastDayCount> forecastDaySeen{};
     for (JsonObjectConst item : rows) {
@@ -434,13 +443,13 @@ bool parseHkoForecastJson(const char* json,
             error = "天文台預報日期格式錯誤";
             return false;
         }
-        if (date.serialDay < referenceDay ||
+        if (date.serialDay < firstForecastDay ||
             date.serialDay >=
-                referenceDay + static_cast<int64_t>(kForecastDayCount)) {
+                firstForecastDay + static_cast<int64_t>(kForecastDayCount)) {
             continue;
         }
         const std::size_t forecastIndex = static_cast<std::size_t>(
-            date.serialDay - referenceDay);
+            date.serialDay - firstForecastDay);
         if (forecastDaySeen[forecastIndex]) {
             error = "天文台預報日期重複";
             return false;
@@ -457,7 +466,7 @@ bool parseHkoForecastJson(const char* json,
     parsed.updatedAtEpoch = updateEpoch;
     for (std::size_t index = 0; index < kForecastDayCount; ++index) {
         if (!forecastDaySeen[index]) {
-            error = "天文台預報未包含由今日起完整六日";
+            error = "天文台預報未包含今日或明日起連續六日";
             return false;
         }
         parsed.days[index] = std::move(forecastDays[index]);

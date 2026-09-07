@@ -26,19 +26,6 @@ std::size_t acceptedForStream(
         }));
 }
 
-void accumulateEvidence(transitink::CommuteEtaEvidence& evidence,
-                        const transitink::BusEtaResponseInfo& info,
-                        bool succeeded) {
-    ++evidence.sourcesExpected;
-    if (!succeeded) return;
-    ++evidence.sourcesSucceeded;
-    evidence.generatedAtEpoch =
-        std::max(evidence.generatedAtEpoch, info.generatedAtEpoch);
-    evidence.dataAtEpoch = std::max(evidence.dataAtEpoch, info.dataAtEpoch);
-    evidence.rawRowCount += info.rawRowCount;
-    evidence.parsedRowCount += info.parsedRowCount;
-}
-
 void logProviderResult(
     const char* provider,
     const transitink::CommuteBusFeedConfig& config,
@@ -72,6 +59,7 @@ bool CommuteBusClient::refresh(
     transitink::CommuteDashboardSnapshot& dashboard,
     int64_t nowEpoch,
     String& error) {
+    const uint32_t refreshStartedMs = millis();
     transitink::initializeCommuteBusRows(dashboard);
     bool allSucceeded = true;
     String combinedError;
@@ -81,66 +69,85 @@ bool CommuteBusClient::refresh(
         const auto kind = static_cast<transitink::CommuteEtaKind>(index);
         const auto& config = configs[index];
         std::vector<transitink::BusEtaRecord> combined;
-        std::vector<transitink::BusEtaRecord> sourceRecords;
         transitink::CommuteEtaEvidence evidence;
-        transitink::BusEtaResponseInfo sourceInfo;
-        String sourceError;
+        evidence.sourceStatusKnown = true;
         String routeError;
-
-        const bool citybusOk = citybus_.fetchEtaRecords(
-            config.citybus, sourceRecords, sourceError, &sourceInfo);
-        const std::size_t citybusAccepted =
-            acceptedForStream(kind, sourceRecords, nowEpoch);
-        accumulateEvidence(evidence, sourceInfo, citybusOk);
-        logProviderResult("CTB", config, config.citybus.stopId.c_str(),
-                          config.citybus.directionId.c_str(), sourceInfo,
-                          citybusOk, citybusAccepted, sourceError);
-        if (citybusOk) {
-            combined.insert(combined.end(), sourceRecords.begin(),
-                            sourceRecords.end());
-        } else {
-            allSucceeded = false;
-            const String source =
-                String("CTB ") + config.citybus.routeId.c_str();
-            appendError(combinedError, source, sourceError);
-            appendError(routeError, source, sourceError);
-        }
-
-        const bool hasKmbSource = config.kmbStopId != nullptr;
-        bool kmbOk = true;
-        if (hasKmbSource) {
-            sourceRecords.clear();
-            sourceInfo = {};
-            sourceError = "";
-            kmbOk = kmb_.fetchStopEtaRecords(config.kmbStopId, sourceRecords,
+        const std::size_t sourceCount = config.kmbStopId != nullptr ? 2 : 1;
+        bool anySourceSucceeded = false;
+        bool allSourcesSucceeded = true;
+        for (std::size_t source = 0; source < sourceCount; ++source) {
+            auto& poll = providerPolls_[index][source];
+            ++evidence.sourcesExpected;
+            const uint8_t mask = static_cast<uint8_t>(1U << source);
+            const char* provider = source == 0 ? "CTB" : "KMB";
+            const uint32_t requestedAtMs = millis();
+            if (transitink::commuteProviderPollDue(poll, requestedAtMs)) {
+                std::vector<transitink::BusEtaRecord> sourceRecords;
+                transitink::BusEtaResponseInfo sourceInfo;
+                String sourceError;
+                const bool ok = source == 0 ?
+                    citybus_.fetchEtaRecords(config.citybus, sourceRecords,
+                                             sourceError, &sourceInfo) :
+                    kmb_.fetchStopEtaRecords(config.kmbStopId, sourceRecords,
                                              sourceError, &sourceInfo);
-            const std::size_t kmbAccepted =
-                acceptedForStream(kind, sourceRecords, nowEpoch);
-            accumulateEvidence(evidence, sourceInfo, kmbOk);
-            logProviderResult("KMB", config, config.kmbStopId,
-                              config.kmbDirectionId, sourceInfo, kmbOk,
-                              kmbAccepted, sourceError);
-            if (kmbOk) {
-                combined.insert(combined.end(), sourceRecords.begin(),
-                                sourceRecords.end());
+                transitink::recordCommuteProviderPoll(poll, millis(), ok);
+                const std::size_t accepted = acceptedForStream(kind, sourceRecords, nowEpoch);
+                logProviderResult(provider, config,
+                    source == 0 ? config.citybus.stopId.c_str() : config.kmbStopId,
+                    source == 0 ? config.citybus.directionId.c_str() : config.kmbDirectionId,
+                    sourceInfo, ok, accepted, sourceError);
+                if (ok) {
+                    evidence.sourcesUpdatedMask |= mask;
+                    evidence.requestedAtEpochs[source] = nowEpoch +
+                        static_cast<uint32_t>(requestedAtMs - refreshStartedMs) / 1000;
+                    evidence.generatedAtEpochs[source] = sourceInfo.generatedAtEpoch;
+                    evidence.rawRowCount += sourceInfo.rawRowCount;
+                    evidence.parsedRowCount += sourceInfo.parsedRowCount;
+                    for (auto& record : sourceRecords) {
+                        // Keep the request instant distinct from the provider's
+                        // generation/data timestamps. No raw ETA is shifted.
+                        record.requestedAtEpoch = nowEpoch +
+                            static_cast<uint32_t>(requestedAtMs - refreshStartedMs) / 1000;
+                        if (transitink::commuteEtaRecordMatches(kind, record)) {
+                            evidence.dataAtEpochs[source] = std::max(
+                                evidence.dataAtEpochs[source], record.dataAtEpoch);
+                            Serial.printf("Commute row provider=%s route=%s stop=%s dir=%s "
+                                          "service=%s stop_seq=%u eta_seq=%u eta=%lld "
+                                          "generated=%lld data=%lld request=%lld scheduled=%s\n",
+                                provider, record.routeId.c_str(), record.stopId.c_str(),
+                                record.directionId.c_str(), record.serviceType.c_str(),
+                                static_cast<unsigned int>(record.stopSequence),
+                                static_cast<unsigned int>(record.etaSequence),
+                                static_cast<long long>(record.eventEpoch),
+                                static_cast<long long>(record.generatedAtEpoch),
+                                static_cast<long long>(record.dataAtEpoch),
+                                static_cast<long long>(record.requestedAtEpoch),
+                                record.scheduled ? "yes" : "no");
+                        }
+                    }
+                    combined.insert(combined.end(), sourceRecords.begin(), sourceRecords.end());
+                } else {
+                    const String label = String(provider) + " " + config.citybus.routeId.c_str();
+                    appendError(combinedError, label, sourceError);
+                    appendError(routeError, label, sourceError);
+                }
+            }
+            if (poll.succeeded) {
+                anySourceSucceeded = true;
+                ++evidence.sourcesSucceeded;
             } else {
+                evidence.sourcesFailedMask |= mask;
+                allSourcesSucceeded = false;
                 allSucceeded = false;
-                const String source =
-                    String("KMB ") + config.citybus.routeId.c_str();
-                appendError(combinedError, source, sourceError);
-                appendError(routeError, source, sourceError);
+                if (routeError.isEmpty()) {
+                    appendError(routeError, provider, "retry backoff");
+                }
             }
         }
-
-        const bool anySourceSucceeded =
-            citybusOk || (hasKmbSource && kmbOk);
-        const bool allSourcesSucceeded =
-            citybusOk && (!hasKmbSource || kmbOk);
         transitink::applyCommuteEtaRecords(
             dashboard, kind, combined, nowEpoch, anySourceSucceeded,
             allSourcesSucceeded,
-            allSourcesSucceeded ? std::string() : routeError.c_str(),
-            evidence);
+            allSourcesSucceeded ? std::string() : routeError.c_str(), evidence);
         const auto& snapshot = transitink::commuteEta(dashboard, kind);
         Serial.printf("Commute route=%s departures=",
                       config.citybus.routeId.c_str());

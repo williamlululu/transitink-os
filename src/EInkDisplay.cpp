@@ -67,11 +67,11 @@ constexpr DisplayRegion kCommuteBodyRegion{0, kCompositeHeaderHeight,
                                            EINK_WIDTH,
                                            EINK_HEIGHT - kCompositeHeaderHeight};
 constexpr DisplayRegion kCommuteHeroRegion{0, kCompositeHeaderHeight,
-                                           EINK_WIDTH, 72};
+                                           EINK_WIDTH, 60};
 constexpr DisplayRegion kCommuteRouteARegion{
-    0, kCommuteHeroRegion.y + kCommuteHeroRegion.h, EINK_WIDTH, 62};
+    0, kCommuteHeroRegion.y + kCommuteHeroRegion.h, EINK_WIDTH, 78};
 constexpr DisplayRegion kCommuteRouteBRegion{
-    0, kCommuteRouteARegion.y + kCommuteRouteARegion.h, EINK_WIDTH, 62};
+    0, kCommuteRouteARegion.y + kCommuteRouteARegion.h, EINK_WIDTH, 60};
 constexpr DisplayRegion kCommuteFooterRegion{
     0, kCommuteRouteBRegion.y + kCommuteRouteBRegion.h, EINK_WIDTH,
     EINK_HEIGHT - (kCommuteRouteBRegion.y + kCommuteRouteBRegion.h)};
@@ -300,17 +300,6 @@ void drawAsciiText(int x, int y, const String& text, uint8_t size = 1,
     canvas.print(text);
 }
 
-int asciiTextWidth(const String& text, uint8_t size = 1) {
-    return static_cast<int>(text.length()) * 6 * size;
-}
-
-void drawCenteredAsciiText(int centerX, int y, const String& text,
-                           uint8_t size = 1,
-                           uint16_t color = kColorBlack) {
-    drawAsciiText(centerX - asciiTextWidth(text, size) / 2, y, text, size,
-                  color);
-}
-
 transitink::DisplayTextPlan displayTextPlan(const String& text, int maxWidth) {
     transitink::DisplayTextPlan plan;
     if (maxWidth <= 0) {
@@ -433,7 +422,7 @@ String batteryStatusText() {
 void drawMultilineText(int x, int y, const String& text, int lineHeight = 28) {
     int start = 0;
     int lineY = y;
-    while (start <= text.length()) {
+    while (static_cast<std::size_t>(start) <= text.length()) {
         int newline = text.indexOf('\n', start);
         String line = newline >= 0 ? text.substring(start, newline) : text.substring(start);
         drawText(x, lineY, line);
@@ -500,10 +489,15 @@ const char* shortEnglishWeekday(int weekday) {
     return weekday >= 0 && weekday < 7 ? kWeekdays[weekday] : "---";
 }
 
+void hongKongTime(time_t epoch, struct tm& result) {
+    const time_t localEpoch = epoch + 8 * 60 * 60;
+    gmtime_r(&localEpoch, &result);
+}
+
 String currentFullDateText() {
     struct tm tmInfo;
     const time_t now = time(nullptr);
-    localtime_r(&now, &tmInfo);
+    hongKongTime(now, tmInfo);
     char buffer[24];
     snprintf(buffer, sizeof(buffer), "%04d.%02d.%02d %s",
              tmInfo.tm_year + 1900, tmInfo.tm_mon + 1, tmInfo.tm_mday,
@@ -517,7 +511,7 @@ String currentChineseDateText() {
     };
     struct tm tmInfo;
     const time_t now = time(nullptr);
-    localtime_r(&now, &tmInfo);
+    hongKongTime(now, tmInfo);
     const char* weekday = tmInfo.tm_wday >= 0 && tmInfo.tm_wday < 7
                               ? kWeekdays[tmInfo.tm_wday]
                               : "－";
@@ -528,7 +522,7 @@ String currentChineseDateText() {
 String currentTimeText() {
     struct tm tmInfo;
     const time_t now = time(nullptr);
-    localtime_r(&now, &tmInfo);
+    hongKongTime(now, tmInfo);
     char buffer[8];
     snprintf(buffer, sizeof(buffer), "%02d:%02d", tmInfo.tm_hour,
              tmInfo.tm_min);
@@ -699,13 +693,7 @@ void drawWeatherFooter(const WeatherSnapshot& weather) {
 
 String clockForEpoch(int64_t epoch);
 
-bool rainCondition(String condition) {
-    condition.toLowerCase();
-    return condition.indexOf("雨") >= 0 || condition.indexOf("雷") >= 0 ||
-           condition.indexOf("rain") >= 0 ||
-           condition.indexOf("thunder") >= 0 ||
-           condition.indexOf("shower") >= 0;
-}
+String compactForecastCondition(const std::string& conditionTc);
 
 bool currentWeatherStale(const WeatherSnapshot& weather) {
     const time_t now = time(nullptr);
@@ -715,16 +703,29 @@ bool currentWeatherStale(const WeatherSnapshot& weather) {
 
 String commuteRainText(const transitink::ForecastSnapshot& forecast,
                        const WeatherSnapshot& weather) {
+    // A condition icon is not a rainfall measurement. In particular, a cloudy
+    // icon cannot establish that no rain is falling at the user's location.
     String result = weather.valid
-                        ? (rainCondition(weather.conditionTc)
-                               ? String("現時有雨")
-                               : String("現時無雨"))
+                        ? String("現況") + compactForecastCondition(weather.conditionTc.c_str())
                         : String("現況不明");
     if (weather.valid && currentWeatherStale(weather)) result += "*";
     if (!forecast.valid || forecast.dayCount == 0) return result;
-    String chance(forecast.days[0].rainChanceTc.c_str());
+    const time_t now = time(nullptr);
+    struct tm today;
+    hongKongTime(now, today);
+    const transitink::ForecastDay* todayForecast = nullptr;
+    for (std::size_t index = 0; index < forecast.dayCount; ++index) {
+        if (forecast.days[index].month == today.tm_mon + 1 &&
+            forecast.days[index].day == today.tm_mday) {
+            todayForecast = &forecast.days[index];
+            break;
+        }
+    }
+    // The nine-day product often starts tomorrow; never label it today's PSR.
+    if (todayForecast == nullptr) return result;
+    String chance(todayForecast->rainChanceTc.c_str());
     if (chance.isEmpty()) chance = "不明";
-    result += "／今日有雨機會" + chance;
+    result += "／日PSR" + chance;
     if (forecast.stale) result += "*";
     return result;
 }
@@ -737,13 +738,7 @@ String commuteTemperatureText(
         if (currentWeatherStale(weather)) result += "*";
         return result;
     }
-    if (forecast.valid && forecast.dayCount > 0) {
-        String result =
-            String(static_cast<int>(forecast.days[0].minimumC)) + "–" +
-            String(static_cast<int>(forecast.days[0].maximumC)) + "°C";
-        if (forecast.stale) result += "*";
-        return result;
-    }
+    (void)forecast;
     return String("--°C");
 }
 
@@ -751,31 +746,34 @@ void drawCommuteHeader(const transitink::CommuteDashboardSnapshot& snapshot,
                        const transitink::ForecastSnapshot& forecast,
     const WeatherSnapshot& weather) {
     canvas.fillRect(0, 0, EINK_WIDTH, kCompositeHeaderHeight, kColorBlack);
-    drawTextColor(8, 15, "漁灣邨 07:25前到達", kColorWhite);
+    const String title = snapshot.targetEpoch > 0
+                             ? String(snapshot.intent == transitink::CommuteIntent::Special
+                                          ? "特別 " : "通勤 ") +
+                                   "目標" + clockForEpoch(snapshot.targetEpoch)
+                             : String("漁灣邨 現在出門");
+    drawTruncatedTextColor(8, 15, title, 178, kColorWhite);
     drawTextColor(8, 32, currentChineseDateText(), kColorWhite);
-    drawTextColor(188, 15,
-                  String("氣溫 ") + commuteTemperatureText(forecast, weather),
-                  kColorWhite);
+    drawTruncatedTextColor(188, 15, commuteTemperatureText(forecast, weather),
+                           64, kColorWhite);
     drawTruncatedTextColor(126, 32, commuteRainText(forecast, weather), 184,
                            kColorWhite);
     drawWifiIcon(260, 1, WiFi.status() == WL_CONNECTED, kColorWhite);
     drawBatteryIcon(288, 0, batteryMonitor.read(), kColorWhite);
     drawAsciiText(316, 17, currentTimeText(), 2, kColorWhite);
     drawAsciiText(378, 3, "1/2", 1, kColorWhite);
-    (void)snapshot;
 }
 
 String assessmentText(transitink::CommuteAssessment assessment, bool stale) {
     String result;
     switch (assessment) {
         case transitink::CommuteAssessment::Safe:
-            result = "準時";
+            result = "預計趕及";
             break;
         case transitink::CommuteAssessment::Tight:
             result = "有風險";
             break;
         case transitink::CommuteAssessment::Late:
-            result = "將會遲到";
+            result = "預計遲到";
             break;
         default:
             result = "暫無班次";
@@ -790,8 +788,13 @@ String routeAStateText(
     String result;
     switch (snapshot.routeAStatus.state) {
         case transitink::CommuteRouteAState::ConfirmedPair:
-            return assessmentText(snapshot.routeA.assessment,
-                                  snapshot.routeA.stale);
+            if (snapshot.routeA.primary.firstLegScheduled ||
+                snapshot.routeA.primary.connectionScheduled) return "含表定班次";
+            if (snapshot.routeA.primary.connectionAtRisk) return "轉車有風險";
+            return snapshot.targetEpoch <= 0
+                       ? String("可轉車")
+                       : assessmentText(snapshot.routeA.assessment,
+                                        snapshot.routeA.stale);
         case transitink::CommuteRouteAState::ProvisionalTransfer:
             result = "預計轉車";
             break;
@@ -815,7 +818,8 @@ String routeAStateText(
 String targetMarginText(
     const transitink::CommuteDashboardSnapshot& snapshot,
     const transitink::CommuteTripEstimate& trip) {
-    if (!trip.valid || snapshot.targetEpoch <= 0) return String("未有到達時間");
+    if (!trip.valid) return String("未能估算");
+    if (snapshot.targetEpoch <= 0) return String("只供估算");
     const int64_t seconds = snapshot.targetEpoch - trip.arrivalEpoch;
     if (seconds >= 0) {
         return String("早") + String(static_cast<long>(seconds / 60)) + "分";
@@ -836,11 +840,10 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
                     kCommuteHeroRegion.w, kCommuteHeroRegion.h, kColorBlack);
     if (!transitink::isActiveCommuteSession(snapshot.sessionMode)) {
         drawTextColor(12, kCommuteHeroRegion.y + 31,
-                      snapshot.weekday ? String("自動更新暫停")
-                                       : String("週末不自動更新"),
+                      String("自動通勤暫停"),
                       kColorWhite, 2);
-        drawTextColor(12, kCommuteHeroRegion.y + 59,
-                      "按主頁鍵可手動更新十分鐘", kColorWhite);
+        drawTextColor(12, kCommuteHeroRegion.y + 53,
+                      "主頁鍵：隨時查車十分鐘", kColorWhite);
         return;
     }
 
@@ -862,7 +865,7 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
             drawTextColor(12, kCommuteHeroRegion.y + 31,
                           "轉車班次待確認", kColorWhite, 2);
             drawTruncatedTextColor(
-                12, kCommuteHeroRegion.y + 59,
+                12, kCommuteHeroRegion.y + 53,
                 String("106 ") +
                     clockForEpoch(snapshot.routeA.primary.firstBusEpoch) +
                     "／" +
@@ -876,7 +879,7 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
             transitink::CommuteRouteAState::NoService) {
             drawTextColor(12, kCommuteHeroRegion.y + 31,
                           "8P未有服務", kColorWhite, 2);
-            drawTextColor(12, kCommuteHeroRegion.y + 59,
+            drawTextColor(12, kCommuteHeroRegion.y + 53,
                           "請查看其他路線", kColorWhite);
             return;
         }
@@ -886,13 +889,13 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
                 transitink::CommuteRouteAState::DataUnavailable) {
             drawTextColor(12, kCommuteHeroRegion.y + 31,
                           "即時資料暫缺", kColorWhite, 2);
-            drawTextColor(12, kCommuteHeroRegion.y + 59,
+            drawTextColor(12, kCommuteHeroRegion.y + 53,
                           "資料不足不等同沒有服務", kColorWhite);
             return;
         }
         drawTextColor(12, kCommuteHeroRegion.y + 31,
                        "暫無可靠即時路線", kColorWhite, 2);
-        drawTextColor(12, kCommuteHeroRegion.y + 59,
+        drawTextColor(12, kCommuteHeroRegion.y + 53,
                       "請提早出門並查看實際班次", kColorWhite);
         return;
     }
@@ -900,248 +903,153 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
     const bool recovery = snapshot.sessionMode ==
                           transitink::CommuteSessionMode::AutomaticRecovery;
     drawTextColor(10, kCommuteHeroRegion.y + 18,
-                  recovery ? String("遲到應變／最快選擇") : String("建議"),
+                  recovery && snapshot.targetEpoch > 0
+                      ? String("趕路／預計最快") : String("建議／預計"),
                   kColorWhite);
-    if (route->primary.provisional) buses += " 預計";
-    drawTextColor(10, kCommuteHeroRegion.y + 55, buses, kColorWhite, 2);
-    drawTextColor(214, kCommuteHeroRegion.y + 18, "最遲出門", kColorWhite);
-    drawTextColor(214, kCommuteHeroRegion.y + 39,
+    drawTextColor(10, kCommuteHeroRegion.y + 52, buses, kColorWhite, 2);
+    drawTextColor(200, kCommuteHeroRegion.y + 16, "趕此班出門", kColorWhite);
+    drawTextColor(200, kCommuteHeroRegion.y + 34,
                   leaveHomeText(route->primary), kColorWhite);
-    drawTextColor(310, kCommuteHeroRegion.y + 18, "預計到達", kColorWhite);
-    drawTextColor(310, kCommuteHeroRegion.y + 39,
+    drawTextColor(310, kCommuteHeroRegion.y + 16, "預計到達", kColorWhite);
+    drawTextColor(310, kCommuteHeroRegion.y + 34,
                   clockForEpoch(route->primary.arrivalEpoch), kColorWhite);
     drawTruncatedTextColor(
-        214, kCommuteHeroRegion.y + 61,
-        (route == &snapshot.routeA
-             ? routeAStateText(snapshot)
-             : assessmentText(route->assessment, route->stale)) +
-            "／" +
-            targetMarginText(snapshot, route->primary),
-        176, kColorWhite);
-}
-
-String commuteDataQualityText(
-    const transitink::CommuteDashboardSnapshot& snapshot) {
-    switch (snapshot.dataQuality) {
-        case transitink::CommuteDataQuality::Fresh:
-            return "資料正常";
-        case transitink::CommuteDataQuality::Partial:
-            return "部分資料";
-        case transitink::CommuteDataQuality::Stale:
-            return "資料過時";
-        default:
-            return WiFi.status() == WL_CONNECTED ? String("資料暫缺")
-                                                 : String("網絡中斷");
-    }
-}
-
-String commuteSessionText(
-    const transitink::CommuteDashboardSnapshot& snapshot) {
-    switch (snapshot.sessionMode) {
-        case transitink::CommuteSessionMode::AutomaticRapid:
-            return "密集更新";
-        case transitink::CommuteSessionMode::AutomaticRecovery:
-            return "遲到應變";
-        case transitink::CommuteSessionMode::Manual:
-            return "手動更新";
-        case transitink::CommuteSessionMode::AutomaticNormal:
-            return "通勤更新";
-        default:
-            return "低耗待機";
-    }
+        200, kCommuteHeroRegion.y + 53,
+        targetMarginText(snapshot, route->primary) + "／非保證",
+        190, kColorWhite);
 }
 
 void drawCommuteRouteA(
     const DisplayRegion& region,
     const transitink::CommuteDashboardSnapshot& snapshot) {
-    const auto& route = snapshot.routeA;
+    const auto& trip = snapshot.routeA.primary;
     canvas.drawFastHLine(region.x, region.y + region.h - 1, region.w,
                          kColorBlack);
-    drawTruncatedText(10, region.y + 19,
-                      "A  106→8P　紅磡街市→維園轉車→漁灣邨", 280);
-    drawRightAlignedTruncatedText(
-        390, region.y + 19, routeAStateText(snapshot), 92);
-    if (snapshot.routeAStatus.state ==
-        transitink::CommuteRouteAState::TransferPending) {
-        if (!route.primary.firstLegValid) {
-            drawText(10, region.y + 41,
-                     "下一班106尚未進入即時資料");
-            drawText(10, region.y + 57, "並非確認沒有服務");
-            return;
-        }
-        drawTruncatedText(
-            10, region.y + 39,
-            String("下一班106 ") + clockForEpoch(route.primary.firstBusEpoch) +
-                "　最遲出門 " + leaveHomeText(route.primary),
-            380);
-        String transferDetail =
-            String("約") + clockForEpoch(route.primary.transferArrivalEpoch) +
-            "到維園　" + clockForEpoch(route.primary.transferReadyEpoch) +
-            "可轉車　";
-        transferDetail += snapshot.routeAStatus.live8pHorizonEpoch > 0
-                              ? String("8P即時至") +
-                                    clockForEpoch(snapshot.routeAStatus
-                                                      .live8pHorizonEpoch)
-                              : String("8P尚未進入即時班次");
-        drawTruncatedText(10, region.y + 56, transferDetail, 380);
+    drawTruncatedText(10, region.y + 17, "A 106→8P 紅磡→維園", 196);
+    drawRightAlignedTruncatedText(390, region.y + 17,
+                                  routeAStateText(snapshot), 176);
+    if (!trip.firstLegValid) {
+        drawTruncatedText(10, region.y + 36,
+                          snapshot.routeAStatus.state == transitink::CommuteRouteAState::NoService
+                              ? "8P不在服務時段" : "106資料暫缺；並非確認停駛", 380);
+        drawTruncatedText(10, region.y + 55,
+                          "8P下一班 " + clockForEpoch(snapshot.routeAStatus.next8pEpoch), 380);
         return;
     }
-    if (snapshot.routeAStatus.state ==
-        transitink::CommuteRouteAState::NoService) {
-        drawText(10, region.y + 43,
-                 snapshot.routeAStatus.reason ==
-                         transitink::CommuteRouteAReason::ServiceNotStarted
-                     ? String("8P服務尚未開始")
-                     : String("8P服務已完結"));
-        return;
+    drawTruncatedText(10, region.y + 36,
+                      String(trip.firstLegScheduled ? "106表定 " : "106 ") + clockForEpoch(trip.firstBusEpoch) +
+                          "　約" + clockForEpoch(trip.transferReadyEpoch) + "可轉車", 380);
+    drawTruncatedText(10, region.y + 55,
+                      "8P下班 " + clockForEpoch(snapshot.routeAStatus.next8pEpoch) +
+                          (trip.valid ? (trip.provisional ? "　估配 " :
+                               (trip.connectionScheduled ? "　表定 " : "　選配 ")) : "　選配待確認") +
+                          (trip.valid ? clockForEpoch(trip.connectionEpoch) : String()), 380);
+    String detail;
+    if (trip.firstLegEarlyProfile || trip.connectionEarlyProfile) {
+        detail = "暫行" + String(trip.firstLegRideMinutes);
+        if (trip.connectionRideMinutes > 0) detail += "/" + String(trip.connectionRideMinutes);
+        detail += "分";
+    } else {
+        detail = "未校準" + String(trip.firstLegRideMinutes);
+        if (trip.connectionRideMinutes > 0) detail += "/" + String(trip.connectionRideMinutes);
+        detail += "分";
     }
-    if (snapshot.routeAStatus.state == transitink::CommuteRouteAState::Stale ||
-        snapshot.routeAStatus.state ==
-            transitink::CommuteRouteAState::DataUnavailable) {
-        drawText(10, region.y + 43, "即時資料暫缺，未當作沒有服務");
-        return;
-    }
-    if (!route.primary.valid) {
-        drawText(10, region.y + 43, "轉車資料待確認");
-        return;
-    }
-    drawTruncatedText(
-        10, region.y + 39,
-        String("下一班 106 ") + clockForEpoch(route.primary.firstBusEpoch) +
-            (route.primary.provisional ? "　8P預計 " : "　8P ") +
-            clockForEpoch(route.primary.connectionEpoch) +
-            "　轉車餘裕 " + route.primary.transferMarginMinutes + "分",
-        380);
-    const String fallback =
-        route.fallback.valid
-            ? String(route.fallback.provisional ? "錯過首班 預計"
-                                                : "錯過首班 ") +
-                  clockForEpoch(route.fallback.arrivalEpoch) + "到"
-            : String("錯過首班：後續未明");
-    drawTruncatedText(
-        10, region.y + 56,
-        String("最遲出門 ") + leaveHomeText(route.primary) +
-            "　預計到達 " + clockForEpoch(route.primary.arrivalEpoch) +
-            "　" + fallback,
-        380);
+    detail += trip.valid ? "　約" + clockForEpoch(trip.arrivalEpoch) + "到達"
+                         : "　8P未入即時範圍";
+    if (trip.valid && trip.transferMarginMinutes >= 0)
+        detail += " 餘" + String(trip.transferMarginMinutes) + "分";
+    drawTruncatedText(10, region.y + 74, detail, 380);
 }
 
 void drawCommuteRouteB(
     const DisplayRegion& region,
     const transitink::CommuteDashboardSnapshot& snapshot) {
     const auto& route = snapshot.routeB;
-    canvas.drawFastHLine(region.x, region.y + region.h - 1, region.w,
-                         kColorBlack);
-    drawTruncatedText(10, region.y + 19,
-                      "B  118　海底隧道→漁灣邨", 310);
-    drawRightAlignedTruncatedText(
-        390, region.y + 19, assessmentText(route.assessment, route.stale), 76);
+    canvas.drawFastHLine(region.x, region.y + region.h - 1, region.w, kColorBlack);
+    drawText(10, region.y + 17, "B  118　海底隧道→漁灣邨");
+    drawRightAlignedTruncatedText(390, region.y + 17,
+        snapshot.targetEpoch <= 0 && route.primary.valid ? String("可乘搭")
+            : assessmentText(route.assessment, route.stale), 96);
     if (!route.primary.valid) {
-        drawText(10, region.y + 43, "暫無可趕及的118班次");
+        drawTruncatedText(10, region.y + 36, "118資料暫缺或未有可趕及班次", 380);
         return;
     }
-    drawTruncatedText(
-        10, region.y + 39,
-        String("下一班 118 ") + clockForEpoch(route.primary.firstBusEpoch) +
-            "　步行 " + COMMUTE_ROUTE_B_WALK_MINUTES + "分",
-        380);
-    const String fallback =
-        route.fallback.valid
-            ? String("錯過首班 ") +
-                  clockForEpoch(route.fallback.arrivalEpoch) + "到"
-            : String("錯過首班：後續未明");
-    drawTruncatedText(
-        10, region.y + 56,
-        String("最遲出門 ") + leaveHomeText(route.primary) +
-            "　預計到達 " + clockForEpoch(route.primary.arrivalEpoch) +
-            "　" + fallback,
-        380);
+    drawTruncatedText(10, region.y + 36,
+                      "118 " + clockForEpoch(route.primary.firstBusEpoch) +
+                          "　趕此班出門 " + leaveHomeText(route.primary), 380);
+    drawTruncatedText(10, region.y + 55,
+                      "約" + clockForEpoch(route.primary.arrivalEpoch) + "到　118估算" + String(route.primary.firstLegRideMinutes) + "分／未校準", 380);
 }
 
-void drawCommuteFooter(
-    const transitink::CommuteDashboardSnapshot& snapshot) {
+String sourceAgeText(const transitink::CommuteEtaSnapshot& eta) {
+    String sources;
+    bool kmb = false;
+    bool citybus = false;
+    int64_t oldest = 0;
+    for (std::size_t index = 0; index < eta.count; ++index) {
+        kmb = kmb || eta.operators[index] == static_cast<uint8_t>(transitink::BusOperator::Kmb);
+        citybus = citybus || eta.operators[index] == static_cast<uint8_t>(transitink::BusOperator::Citybus);
+        const int64_t evidence = eta.evidenceEpochs[index] > 0
+                                     ? eta.evidenceEpochs[index] : eta.fetchedAtEpoch;
+        if (evidence > 0 && (oldest == 0 || evidence < oldest)) oldest = evidence;
+    }
+    if (kmb) sources += "九";
+    if (citybus) sources += kmb ? "/城" : "城";
+    if (sources.isEmpty()) sources = "--";
+    if (oldest > 0) {
+        const int64_t age = std::max<int64_t>(0, static_cast<int64_t>(time(nullptr)) - oldest);
+        sources += String(static_cast<long>(age / 60)) + "分";
+    }
+    if (eta.partial || eta.stale) sources += "*";
+    else if (eta.sourceChanged) sources += "!";
+    return sources;
+}
+
+void drawCommuteFooter(const transitink::CommuteDashboardSnapshot& snapshot) {
     const transitink::CommuteRouteEstimate* selected = nullptr;
-    if (snapshot.recommendation == transitink::CommuteChoice::RouteA) {
-        selected = &snapshot.routeA;
-    } else if (snapshot.recommendation ==
-               transitink::CommuteChoice::RouteB) {
-        selected = &snapshot.routeB;
-    }
-    const bool warning =
-        transitink::isActiveCommuteSession(snapshot.sessionMode) &&
-        (selected == nullptr ||
-         selected->assessment != transitink::CommuteAssessment::Safe ||
-         snapshot.sessionMode ==
-             transitink::CommuteSessionMode::AutomaticRecovery);
+    if (snapshot.recommendation == transitink::CommuteChoice::RouteA) selected = &snapshot.routeA;
+    if (snapshot.recommendation == transitink::CommuteChoice::RouteB) selected = &snapshot.routeB;
+    const bool warning = transitink::isActiveCommuteSession(snapshot.sessionMode) &&
+        (selected == nullptr || selected->primary.connectionAtRisk || selected->stale ||
+         (snapshot.targetEpoch > 0 && selected->assessment != transitink::CommuteAssessment::Safe));
     const uint16_t foreground = warning ? kColorWhite : kColorBlack;
-    if (warning) {
-        canvas.fillRect(kCommuteFooterRegion.x, kCommuteFooterRegion.y,
-                        kCommuteFooterRegion.w, kCommuteFooterRegion.h,
-                        kColorBlack);
+    if (warning) canvas.fillRect(kCommuteFooterRegion.x, kCommuteFooterRegion.y,
+                                kCommuteFooterRegion.w, kCommuteFooterRegion.h, kColorBlack);
+    String headline = snapshot.dateHint.empty() ? String("預計行車時間，並非到達保證")
+                                               : String(snapshot.dateHint.c_str());
+    if (!transitink::isActiveCommuteSession(snapshot.sessionMode)) {
+        // Preserve the date hint while automatic sessions are paused.
+    } else if (selected == nullptr)
+        headline = "轉車或即時資料待確認；並非停駛";
+    else if (selected != nullptr && selected->primary.connectionAtRisk)
+        headline = "轉車風險：8P或早到／106或較慢";
+    else if (selected != nullptr && selected->primary.provisional)
+        headline = "8P以班次間隔估算，尚未即時確認";
+    else if (selected != nullptr && selected->stale)
+        headline = "部分／過時資料；請留意實際班次";
+    else if (selected != nullptr && snapshot.targetEpoch > 0 &&
+             selected->assessment == transitink::CommuteAssessment::Late)
+        headline = "預計未能趕及" + clockForEpoch(snapshot.targetEpoch) + "目標";
+    else if (selected != nullptr && snapshot.targetEpoch > 0 &&
+             selected->assessment == transitink::CommuteAssessment::Tight)
+        headline = "到達目標餘裕不足，請提早出門";
+    drawTruncatedTextColor(10, kCommuteFooterRegion.y + 15, headline, 380, foreground);
+    const auto& fallback = selected != nullptr ? selected->fallback : snapshot.routeA.fallback;
+    String fallbackText = "錯過首班：後續未明";
+    if (fallback.valid) {
+        fallbackText = String(fallback.provisional ? "錯過首班：估配約" : "錯過首班：約") +
+                       clockForEpoch(fallback.arrivalEpoch) + "到";
+        if (snapshot.targetEpoch > 0)
+            fallbackText += fallback.arrivalEpoch <= snapshot.targetEpoch ? "／預計趕及" : "／預計遲到";
+    } else if (fallback.firstLegValid) {
+        fallbackText = "錯過106：" + clockForEpoch(fallback.firstBusEpoch) + "／8P待確認";
     }
-
-    String headline = "即時班次配合保守行車估算";
-    if (selected == nullptr &&
-        snapshot.routeAStatus.state ==
-            transitink::CommuteRouteAState::TransferPending) {
-        headline = "8P尚未進入即時班次；保留106資料";
-    } else if (selected == nullptr &&
-               snapshot.routeAStatus.state ==
-                   transitink::CommuteRouteAState::NoService) {
-        headline = "8P未在適用服務時段";
-    } else if (selected == nullptr &&
-               (snapshot.routeAStatus.state ==
-                    transitink::CommuteRouteAState::Stale ||
-                snapshot.routeAStatus.state ==
-                    transitink::CommuteRouteAState::DataUnavailable)) {
-        headline = "即時資料暫缺，不等同暫無班次";
-    } else if (selected == nullptr &&
-        transitink::isActiveCommuteSession(snapshot.sessionMode)) {
-        headline = "警告：暫無可靠路線，07:25難以確定";
-    } else if (selected != nullptr &&
-               selected->assessment == transitink::CommuteAssessment::Late) {
-        headline = "警告：預計將會遲到";
-    } else if (selected != nullptr &&
-               selected->assessment == transitink::CommuteAssessment::Tight) {
-        headline = "有風險：07:25前餘裕很少";
-    } else if (selected != nullptr && selected->stale) {
-        headline = "注意：只可使用部分或過時資料";
-    }
-    drawTruncatedTextColor(10, kCommuteFooterRegion.y + 16, headline, 380,
-                           foreground);
-
-    if (selected != nullptr && selected->fallback.valid) {
-        const String fallbackAssessment =
-            selected->fallback.arrivalEpoch <= snapshot.targetEpoch
-                ? String("仍可趕及")
-                : String("將會遲到");
-        drawTruncatedTextColor(
-            10, kCommuteFooterRegion.y + 32,
-            String("錯過首班：預計") +
-                clockForEpoch(selected->fallback.arrivalEpoch) + "到／" +
-                fallbackAssessment,
-            380, foreground);
-    } else if (snapshot.routeAStatus.state ==
-                   transitink::CommuteRouteAState::TransferPending &&
-               snapshot.routeA.fallback.firstLegValid) {
-        drawTruncatedTextColor(
-            10, kCommuteFooterRegion.y + 32,
-            String("錯過首班106：下一班") +
-                clockForEpoch(snapshot.routeA.fallback.firstBusEpoch),
-            380, foreground);
-    } else {
-        drawTextColor(10, kCommuteFooterRegion.y + 32,
-                      "錯過首班：後續結果未明", foreground);
-    }
-    drawTruncatedTextColor(
-        10, kCommuteFooterRegion.y + 48,
-        commuteDataQualityText(snapshot) + "／" + commuteSessionText(snapshot) +
-            "　更新於 " + clockForEpoch(snapshot.updatedAtEpoch),
-        380, foreground);
-    drawTruncatedTextColor(
-        10, kCommuteFooterRegion.y + 64,
-        "行車時間採保守估算　音量下鍵：天氣",
-        380, foreground);
+    drawTruncatedTextColor(10, kCommuteFooterRegion.y + 31, fallbackText, 380, foreground);
+    drawTruncatedTextColor(10, kCommuteFooterRegion.y + 47,
+        "106 " + sourceAgeText(snapshot.etas[0]) + "  8P " + sourceAgeText(snapshot.etas[1]) +
+            "  118 " + sourceAgeText(snapshot.etas[2]), 380, foreground);
+    drawTruncatedTextColor(10, kCommuteFooterRegion.y + 63,
+                           "主頁查車　上鍵設定　下鍵天氣", 380, foreground);
 }
 
 void drawCommuteBody(const transitink::CommuteDashboardSnapshot& snapshot) {
@@ -1198,7 +1106,7 @@ String clockForEpoch(int64_t epoch) {
     if (epoch <= 0) return String("--:--");
     const time_t value = static_cast<time_t>(epoch);
     struct tm tmInfo;
-    localtime_r(&value, &tmInfo);
+    hongKongTime(value, tmInfo);
     char buffer[8];
     snprintf(buffer, sizeof(buffer), "%02d:%02d", tmInfo.tm_hour,
              tmInfo.tm_min);
@@ -1244,31 +1152,32 @@ void drawForecastCurrentPanel(const transitink::ForecastSnapshot& forecast,
 
     if (weather.valid) {
         drawAsciiText(8, 91, String(weather.temperatureC), 6, kColorWhite);
-        drawTextColor(99, 132, "°C", kColorWhite);
+        drawTextColor(99, 94, "°C", kColorWhite);
         drawWeatherSymbol(96, 103, weather.conditionTc, kColorWhite);
-        drawTruncatedTextColor(8, 170, weather.conditionTc, 132,
+        drawTruncatedTextColor(8, 154, weather.conditionTc +
+                                   (currentWeatherStale(weather) ? "*" : ""), 132,
                                kColorWhite);
     } else {
         drawAsciiText(8, 91, "--", 6, kColorWhite);
         drawTruncatedTextColor(
-            8, 170, transitink::uiText(transitink::UiTextId::DataUnavailable),
+            8, 154, transitink::uiText(transitink::UiTextId::DataUnavailable),
             132, kColorWhite);
     }
 
+    drawTextColor(8, 174, "實測雨量未提供", kColorWhite);
     canvas.drawFastHLine(8, 183, 132, kColorWhite);
-    drawAsciiText(8, 194, "HKO / TODAY+5", 1, kColorWhite);
-    drawAsciiText(8, 216, "TODAY / NEXT 5 DAYS", 1, kColorWhite);
+    drawAsciiText(8, 194, "HKO / NEXT 6 DAYS", 1, kColorWhite);
+    drawTextColor(8, 223, "全日顯著雨機會", kColorWhite);
     const String status = !forecast.valid
                               ? String("FORECAST / OFFLINE")
                               : (forecast.stale ? String("FORECAST / STALE")
                                                 : String("FORECAST / LIVE"));
-    drawAsciiText(8, 242, status, 1, kColorWhite);
-    const int64_t updated = weather.updatedAt > 0
-                                ? static_cast<int64_t>(weather.updatedAt)
-                                : forecast.updatedAtEpoch;
-    drawAsciiText(8, 284,
-                  String("UPDATED / ") + clockForEpoch(updated), 1,
-                  kColorWhite);
+    drawAsciiText(8, 235, status, 1, kColorWhite);
+    drawAsciiText(8, 248, "HKO " + clockForEpoch(forecast.updatedAtEpoch), 1, kColorWhite);
+    drawTextColor(8, 274, "非通勤時段預報", kColorWhite);
+    drawAsciiText(8, 286,
+                  String("NOW ") + clockForEpoch(weather.updatedAt) +
+                      (currentWeatherStale(weather) ? "*" : ""), 1, kColorWhite);
 }
 
 void drawForecastMatrixCell(const DisplayRegion& region,
@@ -1276,16 +1185,16 @@ void drawForecastMatrixCell(const DisplayRegion& region,
     drawAsciiText(region.x + 8, region.y + 6, forecastDayHeader(day), 1);
     const String humidity = forecastHumidityText(day);
     if (!humidity.isEmpty()) {
-        drawAsciiText(region.x + 72, region.y + 6,
-                      String("RH") + humidity, 1);
+        drawAsciiText(region.x + 64, region.y + 6,
+                      humidity + "%", 1);
     }
     drawTruncatedText(region.x + 8, region.y + 42,
                       compactForecastCondition(day.conditionTc), 48);
-    drawAsciiText(region.x + 72, region.y + 25, "PSR", 1);
+    drawAsciiText(region.x + 64, region.y + 25, "PSR", 1);
     const String rainChance = day.rainChanceTc.empty()
                                   ? String("--")
                                   : String(day.rainChanceTc.c_str());
-    drawTruncatedText(region.x + 94, region.y + 42, rainChance, 32);
+    drawTruncatedText(region.x + 86, region.y + 42, rainChance, 32);
     drawAsciiText(region.x + 8, region.y + 53,
                   forecastTemperatureText(day), 2);
     drawAsciiText(region.x + 73, region.y + 60, "C", 1);

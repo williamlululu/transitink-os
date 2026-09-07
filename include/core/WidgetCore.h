@@ -54,6 +54,11 @@ struct BusEtaRecord {
     std::string stopId{};
     uint16_t stopSequence = 0;
     uint8_t etaSequence = 0;
+    // Provider timestamps are evidence, separate from the untouched ETA.
+    int64_t generatedAtEpoch = 0;
+    int64_t dataAtEpoch = 0;
+    int64_t requestedAtEpoch = 0;
+    bool scheduled = false;
 };
 
 struct BusEtaResponseInfo {

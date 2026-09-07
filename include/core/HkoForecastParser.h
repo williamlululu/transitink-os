@@ -7,8 +7,8 @@
 
 namespace transitink {
 
-// Parses the official HKO nine-day forecast response and returns today through
-// the following five days. nowEpoch is UTC; Hong Kong civil dates are
+// Parses six consecutive official forecast dates starting today or tomorrow.
+// A tomorrow-first feed remains tomorrow-first. nowEpoch is UTC; civil dates are
 // calculated with a fixed UTC+8 offset so the result does not depend on the
 // process or device locale.
 bool parseHkoForecastJson(const char* json,

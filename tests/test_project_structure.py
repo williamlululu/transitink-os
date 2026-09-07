@@ -114,7 +114,7 @@ class ProjectStructureTests(unittest.TestCase):
         self.assertIn('#define FIRMWARE_PRODUCT_NAME "TransitInk OS"', config)
         self.assertIn('#define FIRMWARE_SHORT_NAME "TransitInk"', config)
         self.assertIn("#define CONFIG_AP_PREFIX FIRMWARE_SHORT_NAME", config)
-        self.assertIn('#define FIRMWARE_VERSION "1.2.3"', config)
+        self.assertIn('#define FIRMWARE_VERSION "1.3.0"', config)
         self.assertIn(
             '"https://williamlululu.github.io/transitink-os"', config
         )
@@ -429,7 +429,7 @@ class ProjectStructureTests(unittest.TestCase):
 
         config = read_text("include/ProductConfig.h")
         profile_test = read_text("test_host/test_board_profile.cpp")
-        self.assertIn('#define FIRMWARE_VERSION "1.2.3"', config)
+        self.assertIn('#define FIRMWARE_VERSION "1.3.0"', config)
         self.assertIn("battery.adcPin == 4", profile_test)
         self.assertIn("battery.sensePowerPin == 17", profile_test)
         self.assertIn("battery.chargeDetectPin == 2", profile_test)
@@ -1495,7 +1495,7 @@ class ProjectStructureTests(unittest.TestCase):
         main = read_text("src/main.cpp")
         self.assertIn('fetchCurrentWeather("九龍城"', main)
         self.assertIn("planCommuteDashboard", main)
-        self.assertIn("secondsUntilWeekdayScheduledWakeStart", main)
+        self.assertIn("resolveCommuteDate", main)
         self.assertNotIn('#include "TdasClient.h"', main)
 
         display = read_text("src/EInkDisplay.cpp")
@@ -1504,8 +1504,8 @@ class ProjectStructureTests(unittest.TestCase):
             "106→8P",
             "118",
             "錯過首班",
-            "今日有雨機會",
-            "警告：預計將會遲到",
+            "日PSR",
+            "預計未能趕及",
         ):
             self.assertIn(label, display)
         self.assertIn("refreshCommuteBody", display)

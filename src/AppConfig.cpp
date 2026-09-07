@@ -1,4 +1,5 @@
 #include "AppConfig.h"
+#include "CommuteConfigCodec.h"
 
 #include <ArduinoJson.h>
 
@@ -267,6 +268,10 @@ bool parseDeviceConfigJson(const String& json, DeviceConfig& config, String& err
         return false;
     }
     copyCommonFields(doc, *parsed);
+    if (!readCommuteConfig(doc["commute"], *parsed)) {
+        error = "通勤日期或試用參數無效";
+        return false;
+    }
     if (!transitink::isUiLocaleSupported(parsed->uiLocale)) {
         error = "介面語言設定不正確";
         return false;
@@ -397,6 +402,14 @@ bool serializeDeviceConfigJsonChecked(const DeviceConfig& config,
         error = "每日定時喚醒時段無效";
         return false;
     }
+    if (!transitink::commuteDateSettingsValid(config.commuteDates)) {
+        error = "通勤日期設定無效";
+        return false;
+    }
+    if (!commutePersistedProfileValid(config.commutePlanner)) {
+        error = "通勤試用參數無效";
+        return false;
+    }
     if (!areWidgetsValid(config)) {
         error = "小工具設定無效";
         return false;
@@ -416,6 +429,7 @@ bool serializeDeviceConfigJsonChecked(const DeviceConfig& config,
     doc["scheduled_wake_enabled"] = config.scheduledWakeEnabled;
     doc["scheduled_wake_start_minutes"] = config.scheduledWakeStartMinutes;
     doc["scheduled_wake_end_minutes"] = config.scheduledWakeEndMinutes;
+    writeCommuteConfig(doc.createNestedObject("commute"), config);
     JsonArray widgets = doc.createNestedArray("widgets");
     for (const auto& widget : config.widgets) {
         JsonObject item = widgets.createNestedObject();
@@ -447,7 +461,9 @@ bool hasUsableConfig(const DeviceConfig& config) {
         !transitink::isUiLocaleSupported(config.uiLocale) ||
         !transitink::isDisplayFontSupported(config.displayFont) ||
         !transitink::isDeviceTimeZoneSupported(config.timeZone) ||
-        !areCommonFieldsWithinLimits(config) || !isScheduledWakeValid(config)) {
+        !areCommonFieldsWithinLimits(config) || !isScheduledWakeValid(config) ||
+        !transitink::commuteDateSettingsValid(config.commuteDates) ||
+        !commutePersistedProfileValid(config.commutePlanner)) {
         return false;
     }
     return areWidgetsValid(config);

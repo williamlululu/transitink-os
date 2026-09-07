@@ -1150,7 +1150,7 @@ def check_outputs(output: Path, payloads: dict[str, bytes], manifest: dict[str, 
     expected[str(GENERATED_SOURCE)] = source
     failures = []
     for name, content in expected.items():
-        path = Path(name) if name.startswith("/") else output / name
+        path = Path(name) if Path(name).is_absolute() else output / name
         if not path.exists() or path.read_bytes() != content:
             failures.append(str(path))
     if failures:

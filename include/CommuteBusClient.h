@@ -5,6 +5,7 @@
 #include "CitybusClient.h"
 #include "KmbClient.h"
 #include "core/CommuteDashboardCore.h"
+#include "core/CommuteBusCore.h"
 
 class CommuteBusClient {
 public:
@@ -18,4 +19,6 @@ public:
 private:
     KmbClient& kmb_;
     CitybusClient& citybus_;
+    std::array<std::array<transitink::CommuteProviderPollState, 2>,
+               transitink::kCommuteEtaStreamCount> providerPolls_{};
 };

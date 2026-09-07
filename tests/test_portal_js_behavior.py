@@ -23,6 +23,84 @@ def run_node(source):
 
 
 class PortalJavaScriptBehaviorTests(unittest.TestCase):
+    def test_commute_special_target_and_private_hints_roundtrip_as_text(self):
+        source = (ROOT / "src/TransitInkPortalPage.cpp").read_text(encoding="utf-8")
+        script = source.split("<script>", 1)[1].split("</script>", 1)[0]
+        script = script.split("byId('config_form').addEventListener", 1)[0]
+        harness = r"""
+const elements={};
+function makeElement(id){
+  const node={id,value:'',checked:false,children:[],appendChild(child){this.children.push(child)}};
+  Object.defineProperty(node,'textContent',{get(){return this.text||''},set(value){this.text=String(value);this.children=[]}});
+  Object.defineProperty(node,'innerHTML',{set(){throw new Error('Private hint was interpreted as HTML')}});
+  return node;
+}
+function element(id){return elements[id]||(elements[id]=makeElement(id))}
+global.document={getElementById:element,createElement:makeElement};
+global.fetch=()=>{throw new Error('Editing private settings must not send network requests')};
+const original={special_date:20260110,special_target_minutes:540,public_holiday_rule:false,
+  early_profile_enabled:true,early_106_minutes:12,early_8p_minutes:17,
+  risk_106_minutes:15,risk_8p_minutes:20,connection_early_minutes:0,
+  calendar:[{start_date:20260109,end_date:20260111,label:'<img onerror=alert(1)>',pause_automatic:false}]};
+applyCommuteConfig(original);
+if(element('commute_special_date').value!=='2026-01-10'||element('commute_special_target').value!=='09:00')throw new Error('Single-day target was not restored');
+let row=element('commute_calendar_list').children[0];
+if(!row.textContent.includes(original.calendar[0].label)||row.children.length!==1||row.children[0].id!=='button')throw new Error('Hint text became markup or remove control was lost');
+if(!row.textContent.includes('只作提示'))throw new Error('Default hint was presented as an attendance decision');
+if(JSON.stringify(collectCommuteConfig())!==JSON.stringify(original))throw new Error('Settings roundtrip lost target/profile/zero allowance/private hint');
+const collected=collectCommuteConfig();collected.calendar[0].label='changed copy';
+if(collectCommuteConfig().calendar[0].label!==original.calendar[0].label)throw new Error('Collected payload aliases the editing draft');
+row.children[0].onclick();
+if(collectCommuteConfig().calendar.length!==0||original.calendar.length!==1)throw new Error('Removing draft changed saved config or failed');
+element('commute_special_date').value='';
+if(collectCommuteConfig().special_date!==0)throw new Error('Clearing a single-day target did not cancel it');
+element('commute_hint_start').value='2026-01-12';
+element('commute_hint_end').value='2026-01-15';
+element('commute_hint_label').value='Synthetic optional hint';
+addCommuteHint();
+if(collectCommuteConfig().calendar[0].pause_automatic!==false)throw new Error('A hint implicitly paused automatic commute');
+element('commute_hint_pause').checked=true;
+element('commute_hint_label').value='Synthetic explicit pause';
+addCommuteHint();
+if(collectCommuteConfig().calendar[1].pause_automatic!==true)throw new Error('Explicit pause choice was lost');
+const saved=JSON.parse(JSON.stringify(collectCommuteConfig()));
+applyCommuteConfig(saved);
+if(JSON.stringify(collectCommuteConfig())!==JSON.stringify(saved))throw new Error('Private draft did not survive serialized reload');
+process.stdout.write('ok');
+"""
+        completed = run_node(script + harness)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, "ok")
+
+    def test_commute_private_hint_limits_reject_without_mutating_draft(self):
+        source = (ROOT / "src/TransitInkPortalPage.cpp").read_text(encoding="utf-8")
+        script = source.split("<script>", 1)[1].split("</script>", 1)[0]
+        script = script.split("byId('config_form').addEventListener", 1)[0]
+        harness = r"""
+const elements={};
+function makeElement(id){const node={id,value:'',checked:false,children:[],appendChild(child){this.children.push(child)}};Object.defineProperty(node,'textContent',{get(){return this.text||''},set(value){this.text=String(value);this.children=[]}});return node}
+function element(id){return elements[id]||(elements[id]=makeElement(id))}
+global.document={getElementById:element,createElement:makeElement};
+applyCommuteConfig();
+element('commute_hint_start').value='2026-01-12';element('commute_hint_end').value='2026-01-11';element('commute_hint_label').value='Synthetic';
+addCommuteHint();
+if(commuteCalendarDraft.length!==0)throw new Error('Reversed date range was accepted');
+element('commute_hint_end').value='2026-01-12';element('commute_hint_label').value='測'.repeat(25);
+addCommuteHint();
+if(commuteCalendarDraft.length!==0)throw new Error('Overlong UTF-8 label was accepted');
+element('commute_hint_label').value='測'.repeat(24);addCommuteHint();
+if(commuteCalendarDraft.length!==1)throw new Error('Valid 72-byte label boundary was rejected');
+for(let i=1;i<16;i++){element('commute_hint_label').value='Synthetic '+i;addCommuteHint()}
+const before=JSON.stringify(collectCommuteConfig());
+element('commute_hint_label').value='Excess synthetic hint';addCommuteHint();
+if(commuteCalendarDraft.length!==16||JSON.stringify(collectCommuteConfig())!==before)throw new Error('Capacity rejection changed existing private hints');
+if(!element('commute_hint_status').textContent.includes('16'))throw new Error('Capacity error was not explained');
+process.stdout.write('ok');
+"""
+        completed = run_node(script + harness)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, "ok")
+
     def test_widget_pages_render_four_positions_and_move_across_page_boundaries(self):
         source = (ROOT / "src/TransitInkPortalPage.cpp").read_text()
         script = source.split("<script>", 1)[1].split("</script>", 1)[0]

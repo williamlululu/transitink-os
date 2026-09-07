@@ -156,10 +156,15 @@ void test_fixture_parses_exact_records_and_normalizes_two_arrivals() {
     TEST_ASSERT_EQUAL_STRING("001145", records[0].stopId.c_str());
     TEST_ASSERT_EQUAL_UINT16(1, records[0].stopSequence);
     TEST_ASSERT_EQUAL_UINT8(1, records[0].etaSequence);
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch, records[0].generatedAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch - 20, records[0].dataAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(0, records[0].requestedAtEpoch);
     TEST_ASSERT_EQUAL_STRING("", records[1].destinationLabelEn.c_str());
     TEST_ASSERT_EQUAL_UINT8(2, records[1].etaSequence);
     assertRecord(records[1], "11", "O", kNowEpoch + 300, "渣甸山", "", false);
     assertRecord(records[2], "11", "O", kNowEpoch + 600, "渣甸山", "原定班次", false);
+    TEST_ASSERT_TRUE(records[2].scheduled);
+    TEST_ASSERT_FALSE(records[0].scheduled);
     assertRecord(records[3], "11", "O", 0, "渣甸山", "九巴時段", false);
     assertRecord(records[4], "11", "O", 0, "渣甸山", "只供參考", false);
     assertRecord(records[5], "11", "O", 0, "渣甸山", "原定班次取消", true);
@@ -176,6 +181,38 @@ void test_fixture_parses_exact_records_and_normalizes_two_arrivals() {
     TEST_ASSERT_EQUAL_STRING("5 分鐘", result.snapshot.values[0].text.c_str());
     TEST_ASSERT_EQUAL_INT64(kNowEpoch + 600, result.snapshot.values[1].eventEpoch);
     TEST_ASSERT_EQUAL_STRING("10 分鐘", result.snapshot.values[1].text.c_str());
+}
+
+void test_bus_row_timestamps_do_not_inherit_newer_neighbour_data() {
+    const char* json = R"({"generated_timestamp":"2033-05-18T11:33:20+08:00","data":[
+      {"co":"KMB","route":"106","dir":"O","service_type":1,"seq":14,"eta_seq":1,
+       "eta":"2033-05-18T11:38:20+08:00","data_timestamp":"2033-05-18T11:28:20+08:00"},
+      {"co":"KMB","route":"106","dir":"O","service_type":1,"seq":14,"eta_seq":2,
+       "eta":"2033-05-18T11:43:20+08:00","data_timestamp":"2033-05-18T11:33:00+08:00",
+       "rmk_en":"Scheduled Bus"},
+      {"co":"KMB","route":"106","dir":"O","service_type":1,"seq":14,"eta_seq":3,
+       "eta":"2033-05-18T11:48:20+08:00","rmk_en":"Scheduled bus cancelled"}
+    ]})";
+    transitink::BusWidgetConfig config;
+    config.operatorId = transitink::BusOperator::Kmb;
+    config.stopId = "SYNTHETIC_STOP";
+    std::vector<transitink::BusEtaRecord> records;
+    std::string error;
+    transitink::BusEtaResponseInfo info;
+    TEST_ASSERT_TRUE(parseKmbEtaJson(json, config, records, error, &info));
+    TEST_ASSERT_EQUAL_UINT32(3, records.size());
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch - 300, records[0].dataAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch - 20, records[1].dataAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(0, records[2].dataAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch, records[2].generatedAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch - 20, info.dataAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch + 300, records[0].eventEpoch);
+    TEST_ASSERT_TRUE(records[1].scheduled);
+    TEST_ASSERT_TRUE(records[2].cancelled);
+    // Rows retain raw provenance even when the caller does not ask for summary info.
+    TEST_ASSERT_TRUE(parseKmbEtaJson(json, config, records, error));
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch - 300, records[0].dataAtEpoch);
+    TEST_ASSERT_EQUAL_INT64(kNowEpoch, records[0].generatedAtEpoch);
 }
 
 void test_mtr_fixture_parses_both_directions_and_normalizes_two_arrivals() {
@@ -823,6 +860,7 @@ void tearDown() {}
 int main(int argc, char** argv) {
     UNITY_BEGIN();
     RUN_TEST(test_fixture_parses_exact_records_and_normalizes_two_arrivals);
+    RUN_TEST(test_bus_row_timestamps_do_not_inherit_newer_neighbour_data);
     RUN_TEST(test_mtr_fixture_parses_both_directions_and_normalizes_two_arrivals);
     RUN_TEST(test_light_rail_fixture_uses_terminus_ids_and_ignores_special_rows);
     RUN_TEST(test_mtr_parser_rejects_wrong_mode_and_hides_provider_alert_text);

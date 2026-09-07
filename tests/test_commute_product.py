@@ -101,11 +101,13 @@ class CommuteProductTests(unittest.TestCase):
             "record.stopSequence == config.citybusBoardingSequence",
             "record.serviceType == config.kmbServiceType",
             "record.stopId == config.kmbStopId",
-            "equivalentJointEta",
-            "COMMUTE_JOINT_ETA_DEDUP_SECONDS",
-            "duplicate->epoch = std::max",
+            "record.operatorId",
+            "snapshot.evidenceEpochs",
+            "sourcesUpdatedMask",
         ):
             self.assertIn(token, core)
+        self.assertNotIn("equivalentJointEta", core)
+        self.assertNotIn("duplicate->epoch = std::max", core)
         for alternative in ('"102"', '"110"', '"606"'):
             self.assertNotIn(alternative, core)
         self.assertNotIn('"002561"', core)
@@ -137,7 +139,7 @@ class CommuteProductTests(unittest.TestCase):
             "activateManualCommuteSession",
             "manualCommuteSessionDeadlineMs",
             "manualSessionMinutes",
-            "Automatic commute session final 07:30 status update",
+            "Automatic commute session final status update",
             "startActiveWifiReconnect",
             "WiFi.setAutoReconnect(true)",
             "WIFI_PS_MIN_MODEM",
@@ -210,9 +212,9 @@ class CommuteProductTests(unittest.TestCase):
             self.assertIn(token, header + planner)
         for label in (
             "轉車班次待確認",
-            "8P尚未進入即時班次",
+            "8P未入即時範圍",
             "預計轉車",
-            "資料不足不等同沒有服務",
+            "並非確認停駛",
         ):
             self.assertIn(label, display)
 
@@ -239,28 +241,10 @@ class CommuteProductTests(unittest.TestCase):
     def test_chinese_dashboard_labels_and_utf8(self):
         display = read("src/EInkDisplay.cpp")
         labels = (
-            "建議",
-            "立即",
-            "最遲出門",
-            "預計到達",
-            "下一班",
-            "轉車餘裕",
-            "準時",
-            "有風險",
-            "將會遲到",
-            "資料過時",
-            "暫無班次",
-            "網絡中斷",
-            "更新於",
-            "氣溫",
-            "現時有雨",
-            "現時無雨",
-            "今日有雨機會",
-            "紅磡街市",
-            "維園轉車",
-            "海底隧道",
-            "漁灣邨",
-            "九龍城",
+            "建議", "立即", "趕此班出門", "預計到達", "8P下班", "可轉車",
+            "預計趕及", "轉車風險", "預計遲到", "資料過時", "現況",
+            "實測雨量未提供", "日PSR", "海底隧道", "漁灣邨", "九龍城",
+            "未校準", "現在出門", "非保證",
         )
         for label in labels:
             self.assertIn(label, display + read("src/main.cpp"))
@@ -280,39 +264,45 @@ class CommuteProductTests(unittest.TestCase):
 
     def test_long_stop_names_use_bounded_rendering(self):
         display = read("src/EInkDisplay.cpp")
-        self.assertIn(
-            'drawTruncatedText(10, region.y + 19,\n'
-            '                      "A  106→8P　紅磡街市→維園轉車→漁灣邨", 280)',
-            display,
-        )
-        self.assertIn(
-            'drawTruncatedText(10, region.y + 19,\n'
-            '                      "B  118　海底隧道→漁灣邨", 310)',
-            display,
-        )
+        route_a = display[display.index("void drawCommuteRouteA("):display.index("void drawCommuteRouteB(")]
+        route_b = display[display.index("void drawCommuteRouteB("):display.index("String sourceAgeText(")]
+        for body in (route_a, route_b):
+            self.assertIn("drawTruncatedText(", body)
+            self.assertIn("380", body)
         self.assertIn("planTruncatedUtf8", display)
-        self.assertIn("!trip.valid && !trip.firstLegValid", display)
 
     def test_preview_renderer_covers_required_scenarios(self):
         preview = read("scripts/render_commute_previews.py")
-        for filename in (
-            "01_route_a_on_time.png",
-            "02_route_b_rain.png",
-            "03_recovery_0710.png",
-            "04_stale_unavailable.png",
-            "05_manual_weekend.png",
-            "06_transfer_pending.png",
-        ):
-            self.assertIn(filename, preview)
-        self.assertIn("WIDTH = 400", preview)
-        self.assertIn("HEIGHT = 300", preview)
-        self.assertIn('image.convert("1", dither=Image.Dither.NONE)', preview)
+        harness = read("test_host/render_eink_display.cpp")
+        for scenario in ("01_scheduled_confirmed", "02_leave_now", "03_special_target",
+                         "04_transfer_risk", "05_pending_keep_106", "06_provisional_fallback",
+                         "07_stale_partial", "08_standby_date_hint", "10_weather_tomorrow"):
+            self.assertIn(scenario, harness)
+        self.assertIn('#include "../src/EInkDisplay.cpp"', harness)
+        self.assertIn("frame.size == (400, 300)", preview)
+        self.assertIn("std::equal(full.begin(), full.end(), frameBuffer)", harness)
+        self.assertIn("targetMarginText(snapshot, a)", harness)
+
+    def test_home_and_offline_recalculation_preserve_local_behavior(self):
+        main = read("src/main.cpp")
+        home = main[main.index("void serviceHomeButton() {"):main.index("void serviceAutomaticFinalUpdate() {")]
+        self.assertLess(home.index("activeCommutePage = 0"), home.index("showActiveCommuteDashboard()"))
+        self.assertLess(home.index("showActiveCommuteDashboard()"), home.index("startActiveWifiReconnect()"))
+        wake = main[main.index("void returnFromLightSleep(bool manualWake) {"):main.index("void performLightSleepMaintenance() {")]
+        self.assertIn("activeCommutePage = 0", wake)
+        service = main[main.index("void serviceCommuteDashboardIfDue() {"):main.index("void refreshAllWidgetsNow() {")]
+        offline = service[service.index("if (WiFi.status() != WL_CONNECTED)"):service.index("if (transitink::deadlineReached(nowMs,", service.index("if (WiFi.status() != WL_CONNECTED)"))]
+        self.assertIn("refreshCommuteBusesNow()", offline)
+        automatic = main[main.index("if (transitink::isAutomaticCommuteSession(mode)) {", main.index("void loop() {")):]
+        self.assertNotIn("manualCommuteSessionStarted = false", automatic)
+        self.assertIn("resolveCommuteDate", main)
+        self.assertIn("commuteLocalTime", main)
 
     def test_release_version_uses_supported_format(self):
         config = read("include/ProductConfig.h")
         match = re.search(r'^#define FIRMWARE_VERSION "([^"]+)"$', config, re.M)
         self.assertIsNotNone(match)
-        self.assertEqual("1.2.3", match.group(1))
+        self.assertEqual("1.3.0", match.group(1))
         self.assertRegex(match.group(1), r"^\d+\.\d+\.\d+$")
 
 

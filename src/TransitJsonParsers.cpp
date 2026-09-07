@@ -298,9 +298,10 @@ bool parseEtaJson(const char* json,
         error = shapeError;
         return false;
     }
+    const int64_t generatedAtEpoch = parseIsoEpoch(
+        document["generated_timestamp"] | "");
     if (responseInfo != nullptr) {
-        responseInfo->generatedAtEpoch = parseIsoEpoch(
-            document["generated_timestamp"] | "");
+        responseInfo->generatedAtEpoch = generatedAtEpoch;
         responseInfo->rawRowCount =
             document["data"].as<JsonArrayConst>().size();
     }
@@ -358,7 +359,18 @@ bool parseEtaJson(const char* json,
                             : std::move(stopId);
         record.stopSequence = static_cast<uint16_t>(stopSequence);
         record.etaSequence = static_cast<uint8_t>(etaSequence);
-        record.cancelled = record.remarkTc.find("取消") != std::string::npos;
+        record.generatedAtEpoch = generatedAtEpoch;
+        record.dataAtEpoch = parseIsoEpoch(dataTimestamp);
+        std::string remarkEnLower = record.remarkEn;
+        std::transform(remarkEnLower.begin(), remarkEnLower.end(),
+                       remarkEnLower.begin(), [](unsigned char character) {
+                           return static_cast<char>(std::tolower(character));
+                       });
+        record.scheduled = record.remarkTc.find("原定班次") != std::string::npos ||
+                           remarkEnLower.find("scheduled") != std::string::npos;
+        record.cancelled = record.remarkTc.find("取消") != std::string::npos ||
+                           remarkEnLower.find("cancelled") != std::string::npos ||
+                           remarkEnLower.find("canceled") != std::string::npos;
         records.push_back(std::move(record));
         if (responseInfo != nullptr) {
             responseInfo->dataAtEpoch = std::max(

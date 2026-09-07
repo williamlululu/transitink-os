@@ -34,7 +34,27 @@ struct CommuteEtaEvidence {
     std::size_t parsedRowCount = 0;
     uint8_t sourcesExpected = 0;
     uint8_t sourcesSucceeded = 0;
+    // Bit 0 = Citybus, bit 1 = KMB. Updated means a successful new request;
+    // an unpolled/failed source keeps its own prior rows and timestamps.
+    uint8_t sourcesUpdatedMask = 0;
+    uint8_t sourcesFailedMask = 0;
+    bool sourceStatusKnown = false;
+    std::array<int64_t, 2> requestedAtEpochs{};
+    std::array<int64_t, 2> generatedAtEpochs{};
+    std::array<int64_t, 2> dataAtEpochs{};
 };
+
+struct CommuteProviderPollState {
+    uint32_t nextRequestMs = 0;
+    uint8_t consecutiveFailures = 0;
+    bool attempted = false;
+    bool succeeded = false;
+};
+
+bool commuteProviderPollDue(const CommuteProviderPollState& state,
+                            uint32_t nowMs);
+void recordCommuteProviderPoll(CommuteProviderPollState& state,
+                               uint32_t nowMs, bool succeeded);
 
 const std::array<CommuteBusFeedConfig, kCommuteEtaStreamCount>&
 commuteBusFeedConfigs();

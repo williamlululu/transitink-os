@@ -88,9 +88,161 @@ int main() {
     applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, records, now,
                            true, true);
     const auto& bus106 = commuteEta(dashboard, CommuteEtaKind::Bus106);
+    assert(bus106.count == 3);
+    assert(bus106.epochs[0] == now + 10 * 60);
+    assert(bus106.epochs[1] == now + 10 * 60 + 45);
+    assert(bus106.epochs[2] == now + 20 * 60);
+    assert(bus106.operators[0] == static_cast<uint8_t>(BusOperator::Citybus));
+    assert(bus106.operators[1] == static_cast<uint8_t>(BusOperator::Kmb));
+
+    // Equal ETAs and equal provider-local ordinals are still distinct reports.
+    auto equalTimeRecords = records;
+    equalTimeRecords[1].eventEpoch = equalTimeRecords[0].eventEpoch;
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, equalTimeRecords,
+                           now, true, true);
+    assert(bus106.count == 3);
+    assert(bus106.epochs[0] == bus106.epochs[1]);
+    assert(bus106.operators[0] != bus106.operators[1]);
+
+    // Six useful candidates survive a joint-route merge; rows 4-6 are not
+    // discarded merely because earlier departures cannot be reached on foot.
+    std::vector<BusEtaRecord> six;
+    for (uint8_t i = 1; i <= 6; ++i) {
+        auto row = records[i % 2];
+        row.etaSequence = i;
+        row.eventEpoch = now + i * 60;
+        six.push_back(row);
+    }
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, six, now, true, true);
+    assert(bus106.count == 6);
+    assert(bus106.epochs[5] == now + 6 * 60);
+    for (uint8_t i = 7; i <= 16; ++i) {
+        auto row = records[i % 2];
+        row.etaSequence = i;
+        row.eventEpoch = now + i * 60;
+        six.push_back(row);
+    }
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, six, now, true, true);
+    assert(bus106.count == 12);
+    assert(bus106.acceptedRowCount == 16);
+    assert(bus106.epochs[11] == now + 12 * 60);
+    auto wrongStop = records[0];
+    wrongStop.stopId = "SYNTHETIC_WRONG_STOP";
+    assert(!commuteEtaRecordMatches(CommuteEtaKind::Bus106, wrongStop));
+    auto cancelled = records[0];
+    cancelled.cancelled = true;
+    assert(!commuteEtaRecordMatches(CommuteEtaKind::Bus106, cancelled));
+    assert(!commuteEtaRecordMatches(CommuteEtaKind::Bus8P, records[0]));
+    assert(!commuteEtaRecordMatches(CommuteEtaKind::Bus106, records[3]));
+    assert(!commuteEtaRecordMatches(CommuteEtaKind::Bus106, records[4]));
+    assert(!commuteEtaRecordMatches(CommuteEtaKind::Bus106, records[5]));
+
+    // T10: fresh KMB response never renews CTB's older row. Per-row evidence
+    // survives sorting, a failed source, and expiry of another provider's row.
+    auto ctb = records[0];
+    auto kmb = records[1];
+    ctb.dataAtEpoch = now - 240;
+    ctb.generatedAtEpoch = now - 10;
+    ctb.requestedAtEpoch = now;
+    kmb.dataAtEpoch = now - 15;
+    kmb.generatedAtEpoch = now;
+    kmb.requestedAtEpoch = now;
+    CommuteEtaEvidence fullEvidence;
+    fullEvidence.sourceStatusKnown = true;
+    fullEvidence.sourcesUpdatedMask = 3;
+    fullEvidence.sourcesExpected = 2;
+    fullEvidence.sourcesSucceeded = 2;
+    fullEvidence.requestedAtEpochs = {now, now};
+    fullEvidence.generatedAtEpochs = {now - 10, now};
+    fullEvidence.dataAtEpochs = {now - 240, now - 15};
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, {ctb, kmb}, now,
+                           true, true, {}, fullEvidence);
+    assert(bus106.evidenceEpochs[0] == now - 240);
+    assert(bus106.evidenceEpochs[1] == now - 15);
+    assert(bus106.rowGeneratedAtEpochs[0] == now - 10);
+    assert(bus106.rowFetchedAtEpochs[0] == now);
+    auto partialEvidence = fullEvidence;
+    partialEvidence.sourcesUpdatedMask = 2;
+    partialEvidence.sourcesFailedMask = 1;
+    partialEvidence.sourcesSucceeded = 1;
+    kmb.dataAtEpoch = now + 45;
+    kmb.requestedAtEpoch = now + 60;
+    partialEvidence.dataAtEpochs[1] = now + 45;
+    partialEvidence.requestedAtEpochs[1] = now + 60;
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, {kmb}, now + 60,
+                           true, false, "CTB unavailable", partialEvidence);
     assert(bus106.count == 2);
-    assert(bus106.epochs[0] == now + 10 * 60 + 45);
-    assert(bus106.epochs[1] == now + 20 * 60);
+    assert(bus106.epochs[0] == ctb.eventEpoch);
+    assert(bus106.evidenceEpochs[0] == now - 240);
+    assert(bus106.rowFetchedAtEpochs[0] == now);
+    assert(bus106.rowStale[0]);
+    assert(!bus106.rowStale[1]);
+    assert(bus106.evidenceEpochs[1] == now + 45);
+    assert(bus106.sources[0].fetchedAtEpoch == now);
+    assert(bus106.sources[0].dataAtEpoch == now - 240);
+    assert(!bus106.sources[0].succeeded);
+    assert(bus106.sources[1].fetchedAtEpoch == now + 60);
+    assert(bus106.sources[1].dataAtEpoch == now + 45);
+    assert(bus106.sources[1].succeeded);
+
+    // T12: repeated upstream data retains its original evidence time and ETA.
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, {kmb}, now + 90,
+                           true, false, "CTB unavailable", partialEvidence);
+    assert(bus106.evidenceEpochs[1] == now + 45);
+    assert(bus106.epochs[1] == kmb.eventEpoch);
+    assert(!bus106.sourceChanged);
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, {}, ctb.eventEpoch,
+                           false, false, "offline");
+    assert(bus106.count == 1);
+    assert(bus106.epochs[0] == kmb.eventEpoch);
+    assert(bus106.operators[0] == static_cast<uint8_t>(BusOperator::Kmb));
+    assert(bus106.evidenceEpochs[0] == now + 45);
+    assert(bus106.etaSequences[0] == kmb.etaSequence);
+
+    // A response with no source clock cannot manufacture fresh evidence by
+    // repeating the same report in a new HTTP response.
+    dashboard = {};
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, {records[0]}, now,
+                           true, true);
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, {records[0]}, now + 60,
+                           true, true);
+    assert(bus106.evidenceEpochs[0] == now);
+    assert(bus106.rowFetchedAtEpochs[0] == now + 60);
+    assert(!bus106.sourceChanged);
+
+    // Successful empty source data removes old rows rather than keeping ghosts.
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, {}, now + 90,
+                           true, true, {}, fullEvidence);
+    assert(bus106.count == 0);
+    assert(bus106.sources[0].dataAtEpoch == now - 240);
+    assert(bus106.sourceGeneratedAtEpoch == now);
+    assert(bus106.sourceDataAtEpoch == now - 15);
+
+    // Cadence skip keeps each empty response's original upstream markers too.
+    auto skippedEvidence = fullEvidence;
+    skippedEvidence.sourcesUpdatedMask = 0;
+    applyCommuteEtaRecords(dashboard, CommuteEtaKind::Bus106, {}, now + 120,
+                           true, true, {}, skippedEvidence);
+    assert(bus106.sources[0].fetchedAtEpoch == now);
+    assert(bus106.sources[0].dataAtEpoch == now - 240);
+    assert(bus106.sourceDataAtEpoch == now - 15);
+    assert(!bus106.sourceChanged);
+
+    CommuteProviderPollState poll;
+    assert(commuteProviderPollDue(poll, 0));
+    recordCommuteProviderPoll(poll, 0, true);
+    assert(!commuteProviderPollDue(poll, 30000));
+    assert(commuteProviderPollDue(poll, 60000));
+    recordCommuteProviderPoll(poll, 60000, false);
+    assert(poll.nextRequestMs == 120000);
+    recordCommuteProviderPoll(poll, 120000, false);
+    assert(poll.nextRequestMs == 240000);
+    recordCommuteProviderPoll(poll, 240000, true);
+    assert(poll.nextRequestMs == 300000);
+    assert(poll.consecutiveFailures == 0);
+    recordCommuteProviderPoll(poll, UINT32_MAX - 10000, true);
+    assert(!commuteProviderPollDue(poll, 1000));
+    assert(commuteProviderPollDue(poll, 50000));
 
     const std::vector<BusEtaRecord> partial118 = {
         eta(BusOperator::Citybus, "118", "I", "", "001476", 16, 1,

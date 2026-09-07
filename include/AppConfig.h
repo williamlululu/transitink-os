@@ -6,6 +6,8 @@
 #include "core/TimeZoneCore.h"
 #include "core/UiText.h"
 #include "core/WidgetConfigCore.h"
+#include "core/CommuteDateCore.h"
+#include "core/CommuteDashboardCore.h"
 
 namespace transitink {
 
@@ -35,6 +37,8 @@ struct DeviceConfig {
     bool scheduledWakeEnabled = SCHEDULED_WAKE_ENABLED_DEFAULT;
     uint16_t scheduledWakeStartMinutes = SCHEDULED_WAKE_START_DEFAULT_MINUTES;
     uint16_t scheduledWakeEndMinutes = SCHEDULED_WAKE_END_DEFAULT_MINUTES;
+    transitink::CommuteDateSettings commuteDates{};
+    transitink::CommutePlannerSettings commutePlanner{};
     transitink::WidgetSlots widgets{};
 };
 
