@@ -268,11 +268,14 @@ int main() {
     setEtas(dashboard, CommuteEtaKind::Bus118, now, {14, 20, 30});
     planCommuteDashboard(dashboard, now, now + 65 * 60, true);
     assert(dashboard.routeA.primary.valid);
-    assert(dashboard.routeA.primary.transferMarginMinutes == 2);
-    assert(dashboard.routeA.primary.arrivalEpoch == now + 54 * 60);
+    assert(dashboard.routeA.primary.transferMarginMinutes == 12);
+    assert(dashboard.routeA.primary.arrivalEpoch == now + 64 * 60);
+    assert(!dashboard.routeA.primary.connectionAtRisk);
+    assert(dashboard.routeA.nominalFastest.arrivalEpoch == now + 54 * 60);
+    assert(dashboard.routeA.nominalFastest.connectionAtRisk);
     assert(dashboard.routeA.fallback.arrivalEpoch == now + 64 * 60);
     assert(dashboard.routeB.primary.arrivalEpoch == now + 55 * 60);
-    assert(dashboard.recommendation == CommuteChoice::RouteA);
+    assert(dashboard.recommendation == CommuteChoice::RouteB);
     assert(dashboard.dataQuality == CommuteDataQuality::Fresh);
 
     planCommuteDashboard(dashboard, now, now + 65 * 60, true,
@@ -285,7 +288,7 @@ int main() {
     assert(dashboard.recommendation == CommuteChoice::None);
     planCommuteDashboard(dashboard, now, now + 65 * 60, false,
                          CommutePlannerSettings{}, CommuteSessionMode::Manual);
-    assert(dashboard.recommendation == CommuteChoice::RouteA);
+    assert(dashboard.recommendation == CommuteChoice::RouteB);
 
     for (auto& stream : dashboard.etas) stream.fetchedAtEpoch = now - 4 * 60;
     planCommuteDashboard(dashboard, now, now + 65 * 60, true);

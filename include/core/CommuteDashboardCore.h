@@ -136,7 +136,11 @@ struct CommuteTripEstimate {
 struct CommuteRouteEstimate {
     CommuteTripEstimate primary;
     CommuteTripEstimate fallback;
+    // Preserve nominal-fastest evidence when a lower-risk on-time pair wins.
+    CommuteTripEstimate nominalFastest;
     CommuteAssessment assessment = CommuteAssessment::Unavailable;
+    // Independent slower engineering scenario, never added to nominal ETA.
+    CommuteAssessment riskAssessment = CommuteAssessment::Unavailable;
     bool stale = false;
 };
 

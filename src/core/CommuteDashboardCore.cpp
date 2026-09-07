@@ -164,21 +164,29 @@ enum class ServiceExpectation : uint8_t {
     Ended,
 };
 
+int64_t transferServiceDayEpoch(int64_t nowEpoch,
+                                int64_t transferReadyEpoch,
+                                uint16_t localMinuteOfDay) {
+    if (localMinuteOfDay >= 24 * 60 || nowEpoch <= 0 ||
+        transferReadyEpoch < nowEpoch) return 0;
+    // The caller supplies Hong Kong's civil minute. Anchor its midnight once,
+    // retaining now's seconds, then locate the transfer's own civil/service day.
+    // Advancing now (including across midnight) cannot move this absolute axis.
+    const int64_t midnight = nowEpoch - nowEpoch % 60 -
+        static_cast<int64_t>(localMinuteOfDay) * 60;
+    int64_t serviceDay = midnight +
+        ((transferReadyEpoch - midnight) / 86400) * 86400;
+    if (transferReadyEpoch - serviceDay < 2 * 3600) serviceDay -= 86400;
+    return serviceDay;
+}
+
 uint32_t transferServiceMinute(int64_t nowEpoch,
                                int64_t transferReadyEpoch,
                                uint16_t localMinuteOfDay) {
-    if (localMinuteOfDay == kUnknownCommuteLocalMinute || nowEpoch <= 0 ||
-        transferReadyEpoch <= 0) {
-        return UINT32_MAX;
-    }
-    const int64_t secondsAhead =
-        std::max<int64_t>(0, transferReadyEpoch - nowEpoch);
-    uint32_t minute = static_cast<uint32_t>(localMinuteOfDay) +
-                      static_cast<uint32_t>((secondsAhead + 59) / 60);
-    // The published 8P service day extends past midnight. Treat the first two
-    // clock hours as the tail of the prior service day when appropriate.
-    if (localMinuteOfDay < 2 * 60 && minute < 2 * 60) minute += 24 * 60;
-    return minute;
+    const int64_t serviceDay = transferServiceDayEpoch(
+        nowEpoch, transferReadyEpoch, localMinuteOfDay);
+    if (serviceDay <= 0) return UINT32_MAX;
+    return static_cast<uint32_t>((transferReadyEpoch - serviceDay + 59) / 60);
 }
 
 ServiceExpectation serviceExpectationAt(
@@ -237,9 +245,10 @@ int64_t provisional8pEpoch(
     const uint32_t connectionMinute =
         originDepartureMinute + settings.route8pOriginToTransferMinutes;
     if (connectionMinute < transferMinute) return 0;
-    return transferReadyEpoch +
-           static_cast<int64_t>(connectionMinute - transferMinute) *
-               kSecondsPerMinute;
+    const int64_t connection = transferServiceDayEpoch(
+        nowEpoch, transferReadyEpoch, localMinuteOfDay) +
+        static_cast<int64_t>(connectionMinute) * kSecondsPerMinute;
+    return connection >= transferReadyEpoch ? connection : 0;
 }
 
 void tracePair(CommutePlannerDiagnostics* diagnostics,
@@ -269,6 +278,32 @@ CommuteAssessment assess(const CommuteTripEstimate& trip,
     }
     return trip.arrivalEpoch <= targetEpoch ? CommuteAssessment::Tight
                                              : CommuteAssessment::Late;
+}
+
+bool lowerKnownRiskOnTime(const CommuteTripEstimate& trip, int64_t targetEpoch) {
+    return targetEpoch > 0 && trip.valid && trip.arrivalEpoch <= targetEpoch &&
+        trip.riskArrivalEpoch > 0 && trip.riskArrivalEpoch <= targetEpoch &&
+        !trip.connectionAtRisk && !trip.provisional;
+}
+
+bool betterTripForTarget(const CommuteTripEstimate& candidate,
+                         const CommuteTripEstimate& current,
+                         int64_t targetEpoch) {
+    if (!candidate.valid) return false;
+    if (!current.valid) return true;
+    const bool candidateOnTime = targetEpoch > 0 && candidate.arrivalEpoch <= targetEpoch;
+    const bool currentOnTime = targetEpoch > 0 && current.arrivalEpoch <= targetEpoch;
+    if (candidateOnTime != currentOnTime) return candidateOnTime;
+    if (candidate.provisional != current.provisional) return !candidate.provisional;
+    // For a target, prefer an on-time option without the known transfer/slow
+    // miss over a faster risky on-time option. If both are late, or no target
+    // exists, keep nominal-fastest ordering. This is not a probability model.
+    const bool candidateLowerRisk = lowerKnownRiskOnTime(candidate, targetEpoch);
+    const bool currentLowerRisk = lowerKnownRiskOnTime(current, targetEpoch);
+    if (candidateLowerRisk != currentLowerRisk) return candidateLowerRisk;
+    if (candidate.arrivalEpoch != current.arrivalEpoch)
+        return candidate.arrivalEpoch < current.arrivalEpoch;
+    return candidate.firstBusEpoch < current.firstBusEpoch;
 }
 
 CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
@@ -351,6 +386,7 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
         for (std::size_t firstIndex = 0; firstIndex < firstLegCount;
              ++firstIndex) {
             const auto& firstLeg = firstLegs[firstIndex];
+            CommuteTripEstimate bestForFirstLeg;
             for (std::size_t connectionIndex = 0;
                  connectionIndex < std::min(bus8p.count, bus8p.epochs.size());
                  ++connectionIndex) {
@@ -375,22 +411,24 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
                 tracePair(diagnostics, candidate.firstBusEpoch,
                           candidate.transferReadyEpoch, connection,
                           CommuteTransferPairOutcome::AcceptedLive);
-                if (candidateCount < candidates.size()) {
-                    candidates[candidateCount++] = candidate;
-                }
-                // The first reachable 8P is the useful connection for this 106.
-                break;
+                if (!result.nominalFastest.valid ||
+                    candidate.arrivalEpoch < result.nominalFastest.arrivalEpoch ||
+                    (candidate.arrivalEpoch == result.nominalFastest.arrivalEpoch &&
+                     candidate.firstBusEpoch < result.nominalFastest.firstBusEpoch))
+                    result.nominalFastest = candidate;
+                if (betterTripForTarget(candidate, bestForFirstLeg, targetEpoch))
+                    bestForFirstLeg = candidate;
             }
+            // Evaluate every bounded pair, retaining only one best option per
+            // first leg. Do not allocate a 12x12 trip array on the device stack.
+            if (bestForFirstLeg.valid) candidates[candidateCount++] = bestForFirstLeg;
         }
     }
 
     std::stable_sort(candidates.begin(), candidates.begin() + candidateCount,
-                     [](const CommuteTripEstimate& left,
+                     [targetEpoch](const CommuteTripEstimate& left,
                         const CommuteTripEstimate& right) {
-                         if (left.arrivalEpoch != right.arrivalEpoch) {
-                             return left.arrivalEpoch < right.arrivalEpoch;
-                         }
-                         return left.firstBusEpoch < right.firstBusEpoch;
+                         return betterTripForTarget(left, right, targetEpoch);
                      });
     if (candidateCount > 0) {
         result.primary = candidates.front();
@@ -570,6 +608,13 @@ bool betterRecommendation(const CommuteRouteEstimate& candidate,
         return !candidate.primary.provisional;
     }
     if (candidate.stale != current.stale) return !candidate.stale;
+    const auto lowerRisk = [](const CommuteRouteEstimate& route) {
+        return (route.riskAssessment == CommuteAssessment::Safe ||
+                route.riskAssessment == CommuteAssessment::Tight) &&
+            !route.primary.connectionAtRisk;
+    };
+    if (candidateOnTime && lowerRisk(candidate) != lowerRisk(current))
+        return lowerRisk(candidate);
     return candidate.primary.arrivalEpoch < current.primary.arrivalEpoch;
 }
 
@@ -674,6 +719,14 @@ void planCommuteDashboard(CommuteDashboardSnapshot& dashboard,
     dashboard.routeB = planRouteB(
         commuteEta(dashboard, CommuteEtaKind::Bus118), nowEpoch, targetEpoch,
         settings, recoveryMode);
+    for (auto* route : {&dashboard.routeA, &dashboard.routeB}) {
+        auto slow = route->primary;
+        slow.valid = slow.valid && slow.riskArrivalEpoch > 0;
+        slow.arrivalEpoch = slow.riskArrivalEpoch;
+        route->riskAssessment = assess(slow, targetEpoch, settings, recoveryMode);
+        if (!route->nominalFastest.valid && route->primary.valid)
+            route->nominalFastest = route->primary;
+    }
     dashboard.dataQuality = dataQuality(dashboard, nowEpoch, settings);
     dashboard.updatedAtEpoch = 0;
     for (const auto& eta : dashboard.etas) {

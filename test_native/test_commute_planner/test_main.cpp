@@ -179,15 +179,20 @@ void test_planner_fallback_transfer_and_recovery_mode() {
 
     const int64_t target = kNow + 65 * 60;
     planCommuteDashboard(dashboard, kNow, target, true);
-    TEST_ASSERT_EQUAL_INT64(kNow + 54 * 60,
+    // The fastest pair is tight at the transfer. Keep it observable while
+    // selecting the later lower-risk on-time pair; the direct118 is faster.
+    TEST_ASSERT_EQUAL_INT64(kNow + 54 * 60, dashboard.routeA.nominalFastest.arrivalEpoch);
+    TEST_ASSERT_TRUE(dashboard.routeA.nominalFastest.connectionAtRisk);
+    TEST_ASSERT_FALSE(dashboard.routeA.primary.connectionAtRisk);
+    TEST_ASSERT_EQUAL_INT64(kNow + 64 * 60,
                             dashboard.routeA.primary.arrivalEpoch);
-    TEST_ASSERT_EQUAL_INT16(2,
+    TEST_ASSERT_EQUAL_INT16(12,
                             dashboard.routeA.primary.transferMarginMinutes);
     TEST_ASSERT_EQUAL_INT64(kNow + 64 * 60,
                             dashboard.routeA.fallback.arrivalEpoch);
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(CommuteChoice::RouteA),
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(CommuteChoice::RouteB),
                           static_cast<int>(dashboard.recommendation));
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(CommuteAssessment::Safe),
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(CommuteAssessment::Tight),
                           static_cast<int>(dashboard.routeA.assessment));
 
     planCommuteDashboard(dashboard, kNow, target, true,
@@ -209,7 +214,8 @@ void test_weekend_manual_session_and_stale_cutoff() {
                           static_cast<int>(dashboard.recommendation));
     planCommuteDashboard(dashboard, kNow, kNow + 65 * 60, false,
                          CommutePlannerSettings{}, CommuteSessionMode::Manual);
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(CommuteChoice::RouteA),
+    TEST_ASSERT_TRUE(dashboard.routeA.primary.valid);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(CommuteChoice::RouteB),
                           static_cast<int>(dashboard.recommendation));
 
     for (auto& stream : dashboard.etas) {
@@ -289,8 +295,10 @@ void test_0600_boundary_uses_conservative_provisional_transfer() {
                             dashboard.routeA.primary.transferArrivalEpoch);
     TEST_ASSERT_EQUAL_INT64(kNow + 24 * 60,
                             dashboard.routeA.primary.transferReadyEpoch);
-    TEST_ASSERT_EQUAL_INT64(kNow + 32 * 60,
+    // kNow is at second20: the frequency-model slot is06:32:00, not06:32:20.
+    TEST_ASSERT_EQUAL_INT64(kNow + 32 * 60 - kNow % 60,
                             dashboard.routeA.primary.connectionEpoch);
+    TEST_ASSERT_EQUAL_INT64(0, dashboard.routeA.primary.connectionEpoch % 60);
     TEST_ASSERT_TRUE(dashboard.routeAStatus.timetableUsed);
 }
 

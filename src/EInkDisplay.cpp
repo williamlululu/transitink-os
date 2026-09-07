@@ -783,14 +783,41 @@ String assessmentText(transitink::CommuteAssessment assessment, bool stale) {
     return result;
 }
 
+bool saferConnectionSelected(const transitink::CommuteRouteEstimate& route) {
+    return route.primary.valid && route.nominalFastest.valid &&
+        route.primary.arrivalEpoch > route.nominalFastest.arrivalEpoch;
+}
+
+String arrivalRiskText(const transitink::CommuteDashboardSnapshot& snapshot,
+                       const transitink::CommuteRouteEstimate& route) {
+    if (snapshot.targetEpoch <= 0) return String();
+    if (route.riskAssessment == transitink::CommuteAssessment::Late)
+        return "慢車約" + clockForEpoch(route.primary.riskArrivalEpoch) + "到／或未趕及目標";
+    if (route.riskAssessment == transitink::CommuteAssessment::Tight &&
+        route.assessment == transitink::CommuteAssessment::Safe)
+        return "慢車約" + clockForEpoch(route.primary.riskArrivalEpoch) + "到／目標餘裕不足";
+    return String();
+}
+
 String routeAStateText(
     const transitink::CommuteDashboardSnapshot& snapshot) {
     String result;
+    // Keep the nominal assessment separate; show a known slower-scenario miss
+    // even when the chosen recommendation is the other route.
+    if (snapshot.targetEpoch > 0 && snapshot.routeA.primary.valid) {
+        if (snapshot.routeA.riskAssessment == transitink::CommuteAssessment::Late)
+            return snapshot.routeA.primary.connectionAtRisk ? "轉車／慢車或遲到" : "慢車或遲到";
+        if (snapshot.routeA.riskAssessment == transitink::CommuteAssessment::Tight &&
+            snapshot.routeA.assessment == transitink::CommuteAssessment::Safe)
+            return "慢車餘裕不足";
+    }
     switch (snapshot.routeAStatus.state) {
         case transitink::CommuteRouteAState::ConfirmedPair:
             if (snapshot.routeA.primary.firstLegScheduled ||
                 snapshot.routeA.primary.connectionScheduled) return "含表定班次";
             if (snapshot.routeA.primary.connectionAtRisk) return "轉車有風險";
+            if (snapshot.targetEpoch > 0 && saferConnectionSelected(snapshot.routeA))
+                return "較穩妥轉車";
             return snapshot.targetEpoch <= 0
                        ? String("可轉車")
                        : assessmentText(snapshot.routeA.assessment,
@@ -1009,8 +1036,9 @@ void drawCommuteFooter(const transitink::CommuteDashboardSnapshot& snapshot) {
     const transitink::CommuteRouteEstimate* selected = nullptr;
     if (snapshot.recommendation == transitink::CommuteChoice::RouteA) selected = &snapshot.routeA;
     if (snapshot.recommendation == transitink::CommuteChoice::RouteB) selected = &snapshot.routeB;
+    const String arrivalRisk = selected ? arrivalRiskText(snapshot, *selected) : String();
     const bool warning = transitink::isActiveCommuteSession(snapshot.sessionMode) &&
-        (selected == nullptr || selected->primary.connectionAtRisk || selected->stale ||
+        (selected == nullptr || !arrivalRisk.isEmpty() || selected->primary.connectionAtRisk || selected->stale ||
          (snapshot.targetEpoch > 0 && selected->assessment != transitink::CommuteAssessment::Safe));
     const uint16_t foreground = warning ? kColorWhite : kColorBlack;
     if (warning) canvas.fillRect(kCommuteFooterRegion.x, kCommuteFooterRegion.y,
@@ -1021,12 +1049,17 @@ void drawCommuteFooter(const transitink::CommuteDashboardSnapshot& snapshot) {
         // Preserve the date hint while automatic sessions are paused.
     } else if (selected == nullptr)
         headline = "轉車或即時資料待確認；並非停駛";
+    else if (!arrivalRisk.isEmpty())
+        headline = arrivalRisk;
     else if (selected != nullptr && selected->primary.connectionAtRisk)
         headline = "轉車風險：8P或早到／106或較慢";
     else if (selected != nullptr && selected->primary.provisional)
         headline = "8P以班次間隔估算，尚未即時確認";
     else if (selected != nullptr && selected->stale)
         headline = "部分／過時資料；請留意實際班次";
+    else if (snapshot.targetEpoch > 0 && saferConnectionSelected(*selected))
+        headline = "較穩妥接駁／名義最快" +
+            clockForEpoch(selected->nominalFastest.arrivalEpoch) + "到有風險";
     else if (selected != nullptr && snapshot.targetEpoch > 0 &&
              selected->assessment == transitink::CommuteAssessment::Late)
         headline = "預計未能趕及" + clockForEpoch(snapshot.targetEpoch) + "目標";

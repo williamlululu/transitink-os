@@ -30,6 +30,16 @@ PIO_PYTHON = str(LOCAL_PYTHON) if LOCAL_PYTHON.is_file() else sys.executable
 
 
 class CoreBehaviorTests(unittest.TestCase):
+    def test_rc2_absolute_time_and_risk_policy(self):
+        BUILD_DIR.mkdir(exist_ok=True)
+        binary = BUILD_DIR / "test_commute_rc2"
+        subprocess.run([
+            "c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-Iinclude",
+            "src/core/CommuteDashboardCore.cpp", "test_host/test_commute_rc2.cpp",
+            "-o", str(binary),
+        ], cwd=ROOT, check=True)
+        subprocess.run([str(binary)], cwd=ROOT, check=True)
+
     def test_commute_bus_source_freshness_and_candidates(self):
         BUILD_DIR.mkdir(exist_ok=True)
         cmd = [

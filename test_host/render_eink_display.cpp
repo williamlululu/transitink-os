@@ -175,5 +175,58 @@ int main(int argc, char** argv) {
     weather.valid = false;
     assert(commuteTemperatureText(forecast, weather) == "--°C");
     save("12_weather_current_missing.pbm", true);
-    std::cout << "12 production renderer previews; semantic and partial/full parity checks passed\n";
+    // Actual production planner -> renderer: only feed rows/settings are seeded.
+    // No recommendation, assessment or risk flag is manually filled here.
+    fixtureNow = 1788710400 + 6*3600 + 20*60; // Synthetic HK Monday06:20.
+    weather.valid = true; weather.updatedAt = fixtureNow;
+    forecast.stale = false; forecast.updatedAtEpoch = fixtureNow;
+    for (size_t i=0; i<forecast.dayCount; ++i) {
+        forecast.days[i].month=9; forecast.days[i].day=7+i;
+        forecast.days[i].weekday=(1+i)%7;
+    }
+    const auto seedPlanner = [&](transitink::CommuteEtaKind kind,
+                                 std::initializer_list<int> minutes) {
+        auto& eta=transitink::commuteEta(snapshot,kind); eta={};
+        eta.fetchedAtEpoch=eta.sourceGeneratedAtEpoch=eta.sourceDataAtEpoch=fixtureNow;
+        eta.sourcesExpected=eta.sourcesSucceeded=1;
+        for(auto m:minutes) {
+            eta.epochs[eta.count]=epoch(m);
+            eta.evidenceEpochs[eta.count]=fixtureNow;
+            eta.operators[eta.count++]=static_cast<uint8_t>(transitink::BusOperator::Citybus);
+        }
+    };
+    snapshot={};
+    seedPlanner(transitink::CommuteEtaKind::Bus106,{10});
+    seedPlanner(transitink::CommuteEtaKind::Bus8P,{39});
+    auto plannerInput=snapshot;
+    transitink::CommutePlannerSettings plannerSettings;
+    const auto runPlanner = [&](int64_t target) {
+        transitink::planCommuteDashboard(snapshot,fixtureNow,target,true,plannerSettings,
+            transitink::CommuteSessionMode::Manual,6*60+20);
+        snapshot.intent=target>0?transitink::CommuteIntent::Scheduled:transitink::CommuteIntent::LeaveNow;
+    };
+    runPlanner(epoch(65));
+    assert(snapshot.routeA.primary.arrivalEpoch==epoch(56));
+    save("13_planner_default_risk.pbm");
+    snapshot=plannerInput; plannerSettings.route8pRiskRideMinutes=35;
+    runPlanner(epoch(65));
+    assert(snapshot.routeA.primary.arrivalEpoch==epoch(56));
+    assert(snapshot.routeA.primary.riskArrivalEpoch==epoch(74));
+    assert(snapshot.etas[1].epochs==plannerInput.etas[1].epochs);
+    assert(routeAStateText(snapshot).indexOf("慢車或遲到")>=0);
+    save("14_planner_slow_deadline_risk.pbm");
+    snapshot={}; plannerSettings={};
+    seedPlanner(transitink::CommuteEtaKind::Bus106,{10,16});
+    seedPlanner(transitink::CommuteEtaKind::Bus8P,{26,32,38});
+    seedPlanner(transitink::CommuteEtaKind::Bus118,{19});
+    runPlanner(epoch(65));
+    assert(snapshot.routeA.primary.connectionEpoch==epoch(32));
+    assert(snapshot.recommendation==transitink::CommuteChoice::RouteA);
+    save("15_planner_safer_connection.pbm");
+    snapshot=plannerInput; plannerSettings.route8pRiskRideMinutes=35;
+    runPlanner(0);
+    assert(snapshot.routeA.assessment==transitink::CommuteAssessment::Unavailable);
+    assert(routeAStateText(snapshot).indexOf("遲到")<0);
+    save("16_planner_leave_now_risk.pbm");
+    std::cout << "16 production renderer previews; planner integration, semantic and partial/full parity checks passed\n";
 }

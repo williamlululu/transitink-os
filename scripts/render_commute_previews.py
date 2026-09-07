@@ -41,7 +41,8 @@ def main() -> int:
         sources = [ROOT / "test_host/render_eink_display.cpp", weather_helper, gfx / "Adafruit_GFX.cpp", qr / "qrcode.c"]
         sources += [ROOT / "src" / source for source in [
             "HkGlyphFont.cpp", "generated/HkGlyphFontData.cpp", "generated/UnifontGlyphFontData.cpp",
-            "core/DisplayTextCore.cpp", "core/DisplayFontCore.cpp", "core/UiText.cpp", "core/BusEtaCore.cpp"]]
+            "core/DisplayTextCore.cpp", "core/DisplayFontCore.cpp", "core/UiText.cpp", "core/BusEtaCore.cpp",
+            "core/CommuteDashboardCore.cpp"]]
         command = [args.cxx, "-std=c++17", "-O2", "-Wall", "-Wextra", "-DARDUINO=10800", "-DTRANSITINK_BOARD_ZECTRIX_NOTE4"]
         for include in [ROOT / "test_host/display_shims", ROOT / "include", gfx, qr]:
             command.extend(["-I", str(include)])
@@ -58,11 +59,11 @@ def main() -> int:
                 frame.save(destination)
             previews.append({"file": destination.name, "width": 400, "height": 300,
                              "mode": "1-bit monochrome", "sha256": hashlib.sha256(destination.read_bytes()).hexdigest()})
-        assert len(previews) == 12
-    source_files = [ROOT / "src/EInkDisplay.cpp", ROOT / "src/WeatherClient.cpp", ROOT / "test_host/render_eink_display.cpp", gfx / "Adafruit_GFX.cpp",
+        assert len(previews) == 16
+    source_files = [ROOT / "src/EInkDisplay.cpp", ROOT / "src/core/CommuteDashboardCore.cpp", ROOT / "include/core/CommuteDashboardCore.h", ROOT / "src/WeatherClient.cpp", ROOT / "test_host/render_eink_display.cpp", gfx / "Adafruit_GFX.cpp",
                     ROOT / "src/generated/HkGlyphFontData.cpp", ROOT / "src/generated/UnifontGlyphFontData.cpp"]
-    manifest = {"version": 2, "renderer": "production EInkDisplay.cpp + production glyphs + pinned Adafruit GFX",
-                "fixtures": "synthetic; hardware and clock mocked; no device write", "checks": ["semantic target/weather guards", "full/partial framebuffer parity", "400x300 monochrome"],
+    manifest = {"version": 3, "renderer": "production EInkDisplay.cpp + production glyphs + pinned Adafruit GFX",
+                "fixtures": "synthetic; 13-16 use production planner outputs; hardware and clock mocked; no device write", "checks": ["planner-to-renderer arrival risk and nominal preservation", "semantic target/weather guards", "full/partial framebuffer parity", "400x300 monochrome"],
                 "sources": [{"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in source_files],
                 "previews": previews}
     (output / "preview-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
