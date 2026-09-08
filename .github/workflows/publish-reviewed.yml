@@ -1,0 +1,39 @@
+name: Publish reviewed fixed artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      staging_release_id:
+        description: Numeric ID of the reviewed draft asset staging release
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: publish-reviewed-v1.3.0
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out publication metadata and frozen source history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify and publish the reviewed bytes without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          STAGING_RELEASE_ID: ${{ inputs.staging_release_id }}
+        run: python3 scripts/publish_reviewed_release.py
+
+# GITHUB_TOKEN creates the frozen-source tag without recursively triggering the
+# tag rebuild workflow. Existing CI/release/hash gates remain unchanged.
+# https://docs.github.com/en/actions/concepts/security/github_token
+# This workflow makes no build-provenance attestation. Pages promotion is a
+# separate explicit dispatch through the existing installer-pages workflow.
