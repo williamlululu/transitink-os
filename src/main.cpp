@@ -15,6 +15,7 @@
 #include "ConfigStore.h"
 #include "CitybusClient.h"
 #include "CommuteBusClient.h"
+#include "CommuteContextClient.h"
 #include "EInkDisplay.h"
 #include "FirmwareUpdateService.h"
 #include "GmbClient.h"
@@ -53,6 +54,7 @@ DeviceConfig deviceConfig;
 KmbClient kmbClient;
 CitybusClient citybusClient;
 CommuteBusClient commuteBusClient(kmbClient, citybusClient);
+CommuteContextClient commuteContextClient;
 TflClient tflClient;
 GmbClient gmbClient;
 MtrClient mtrClient;
@@ -336,6 +338,32 @@ void recalculateCommutePlan() {
     commuteDashboardSnapshot.publicHoliday = dateDecision.publicHoliday;
     commuteDashboardSnapshot.holidayCoverageKnown = dateDecision.holidayCoverageKnown;
     logCommuteRouteADecision(diagnosticsOutput);
+    const auto& context=commuteDashboardSnapshot.context;
+    Serial.printf("Commute cycle=%lld context_generated=%lld context_received=%lld context_stale=%u crowding8p=%u\n",
+        static_cast<long long>(now),static_cast<long long>(context.generatedEpoch),
+        static_cast<long long>(context.receivedEpoch),commuteDashboardSnapshot.contextStale,commuteDashboardSnapshot.crowding8p);
+    for(std::size_t i=0;i<context.sources.size();++i)
+        Serial.printf("Commute context_source=%u coverage=%u fetched=%lld\n",static_cast<unsigned>(i),
+            context.sources[i].coverage,static_cast<long long>(context.sources[i].fetchedEpoch));
+    // Bounded retained rows only: public stop ETA/context evidence, no settings,
+    // calendar labels, SSID, credentials or entire upstream JSON.
+    for (std::size_t stream=0; stream<commuteDashboardSnapshot.etas.size(); ++stream) {
+        const auto& eta=commuteDashboardSnapshot.etas[stream];
+        for (std::size_t row=0; row<eta.count; ++row) {
+            const auto& impact=eta.contextImpacts[row];
+            const auto& trip=stream==2?commuteDashboardSnapshot.routeB.primary:commuteDashboardSnapshot.routeA.primary;
+            const bool selected=stream==1?trip.connectionConfirmed && trip.connectionEpoch==eta.epochs[row]:trip.firstLegValid && trip.firstBusEpoch==eta.epochs[row] && trip.firstOperator==eta.operators[row];
+            const char* decision=impact.severity==transitink::ContextSeverity::HardBlock?"official_block":
+                eta.epochs[row]<=now?"expired":now-eta.evidenceEpochs[row]>deviceConfig.commutePlanner.maximumEtaAgeMinutes*60?"stale":
+                selected?"selected":stream==1 && trip.firstLegValid && eta.epochs[row]<trip.transferReadyEpoch?"before_transfer_ready":
+                stream!=1 && eta.epochs[row]<now+(stream==0?deviceConfig.commutePlanner.routeAWalkMinutes:deviceConfig.commutePlanner.routeBWalkMinutes)*60+deviceConfig.commutePlanner.boardingBufferMinutes*60?"before_boarding_ready":"retained_alternative";
+            Serial.printf("Commute cycle=%lld stream=%u row=%u operator=%u eta=%lld evidence=%lld requested=%lld generated=%lld data=%lld scheduled=%u decision=%s context=%s severity=%u\n",
+                static_cast<long long>(now),static_cast<unsigned>(stream),static_cast<unsigned>(row),eta.operators[row],
+                static_cast<long long>(eta.epochs[row]),static_cast<long long>(eta.evidenceEpochs[row]),
+                static_cast<long long>(eta.rowFetchedAtEpochs[row]),static_cast<long long>(eta.rowGeneratedAtEpochs[row]),
+                static_cast<long long>(eta.rowDataAtEpochs[row]),eta.scheduled[row],decision,impact.eventId.c_str(),static_cast<unsigned>(impact.severity));
+        }
+    }
 }
 
 void applyConfiguredTimeZone() {
@@ -527,6 +555,7 @@ void refreshCommuteBusesNow(bool render) {
     bool ok = false;
     if (WiFi.status() == WL_CONNECTED) {
         ok = commuteBusClient.refresh(commuteDashboardSnapshot, nowEpoch, error);
+        commuteContextClient.refresh(commuteDashboardSnapshot.context, nowEpoch);
     } else {
         transitink::initializeCommuteBusRows(commuteDashboardSnapshot);
         const std::string offline =

@@ -33,7 +33,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install pinned tools
-        run: scripts/install_tools.sh
+        run: bash scripts/install_tools.sh
 
       - name: Build firmware for analysis
         env:

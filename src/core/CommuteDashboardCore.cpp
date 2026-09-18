@@ -68,6 +68,12 @@ bool etaRowCurrent(const CommuteEtaSnapshot& snapshot,
                static_cast<int64_t>(settings.maximumEtaAgeMinutes) * 60;
 }
 
+bool etaRowPlanUsable(const CommuteEtaSnapshot& snapshot, std::size_t index,
+                      int64_t now, const CommutePlannerSettings& settings) {
+    return snapshot.contextImpacts[index].severity != ContextSeverity::HardBlock &&
+           etaRowCurrent(snapshot, index, now, settings);
+}
+
 bool etaStreamUsable(const CommuteEtaSnapshot& snapshot,
                      int64_t nowEpoch,
                      const CommutePlannerSettings& settings) {
@@ -291,6 +297,8 @@ bool betterTripForTarget(const CommuteTripEstimate& candidate,
                          int64_t targetEpoch) {
     if (!candidate.valid) return false;
     if (!current.valid) return true;
+    if (candidate.contextDegraded != current.contextDegraded)
+        return !candidate.contextDegraded;
     const bool candidateOnTime = targetEpoch > 0 && candidate.arrivalEpoch <= targetEpoch;
     const bool currentOnTime = targetEpoch > 0 && current.arrivalEpoch <= targetEpoch;
     if (candidateOnTime != currentOnTime) return candidateOnTime;
@@ -315,14 +323,15 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
                                  bool weekday,
                                  uint16_t localMinuteOfDay,
                                  CommuteRouteAStatus& status,
-                                 CommutePlannerDiagnostics* diagnostics) {
+                                 CommutePlannerDiagnostics* diagnostics,
+                                 const CommuteContextSnapshot& context) {
     CommuteRouteEstimate result;
     result.stale = bus106.stale || bus8p.stale;
     status = {};
     if (diagnostics != nullptr) *diagnostics = {};
     for (std::size_t index = 0;
          index < std::min(bus8p.count, bus8p.epochs.size()); ++index) {
-        if (!etaRowCurrent(bus8p, index, nowEpoch, settings)) continue;
+        if (!etaRowPlanUsable(bus8p, index, nowEpoch, settings)) continue;
         if (status.next8pEpoch == 0 ||
             bus8p.epochs[index] < status.next8pEpoch) {
             status.next8pEpoch = bus8p.epochs[index];
@@ -359,9 +368,11 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
          ++firstIndex) {
         const int64_t firstBus = bus106.epochs[firstIndex];
         if (firstBus < earliestBoard ||
-            !etaRowCurrent(bus106, firstIndex, nowEpoch, settings)) continue;
+            !etaRowPlanUsable(bus106, firstIndex, nowEpoch, settings)) continue;
         auto candidate = firstLegEstimate(
             firstBus, nowEpoch, weekday, localMinuteOfDay, settings);
+        candidate.firstOperator = bus106.operators[firstIndex];
+        candidate.contextDegraded = bus106.contextImpacts[firstIndex].severity == ContextSeverity::Degraded;
         candidate.firstLegScheduled = bus106.scheduled[firstIndex];
         candidate.staleEvidence = bus106.rowStale[firstIndex] ||
             (bus106.stale && bus106.evidenceEpochs[firstIndex] == 0);
@@ -390,7 +401,7 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
             for (std::size_t connectionIndex = 0;
                  connectionIndex < std::min(bus8p.count, bus8p.epochs.size());
                  ++connectionIndex) {
-                if (!etaRowCurrent(bus8p, connectionIndex, nowEpoch, settings)) {
+                if (!etaRowPlanUsable(bus8p, connectionIndex, nowEpoch, settings)) {
                     continue;
                 }
                 const int64_t connection = bus8p.epochs[connectionIndex];
@@ -402,6 +413,8 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
                     continue;
                 }
                 CommuteTripEstimate candidate = firstLeg;
+                candidate.connectionOperator = bus8p.operators[connectionIndex];
+                candidate.contextDegraded = candidate.contextDegraded || bus8p.contextImpacts[connectionIndex].severity == ContextSeverity::Degraded;
                 candidate.connectionScheduled = bus8p.scheduled[connectionIndex];
                 candidate.staleEvidence = candidate.staleEvidence ||
                     bus8p.rowStale[connectionIndex] ||
@@ -456,7 +469,10 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
             const int64_t connection = provisional8pEpoch(
                 nowEpoch, result.fallback.transferReadyEpoch, weekday,
                 localMinuteOfDay, settings);
-            if (connection > 0) {
+            const auto impact = commuteContextImpact(context, 1, 1, connection,
+                connection + settings.route8pRideMinutes * 60, nowEpoch);
+            if (connection > 0 && impact.severity != ContextSeverity::HardBlock) {
+                result.fallback.contextDegraded = result.fallback.contextDegraded || impact.severity == ContextSeverity::Degraded;
                 completeConnection(result.fallback, connection, nowEpoch,
                                    weekday, localMinuteOfDay, settings, true);
             }
@@ -507,7 +523,10 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
         const int64_t connection = provisional8pEpoch(
             nowEpoch, candidate.transferReadyEpoch, weekday,
             localMinuteOfDay, settings);
-        if (connection <= 0) continue;
+        const auto impact = commuteContextImpact(context, 1, 1, connection,
+            connection + settings.route8pRideMinutes * 60, nowEpoch);
+        if (connection <= 0 || impact.severity == ContextSeverity::HardBlock) continue;
+        candidate.contextDegraded = candidate.contextDegraded || impact.severity == ContextSeverity::Degraded;
         completeConnection(candidate, connection, nowEpoch, weekday,
                            localMinuteOfDay, settings, true);
         provisional[provisionalCount++] = candidate;
@@ -568,11 +587,13 @@ CommuteRouteEstimate planRouteB(const CommuteEtaSnapshot& bus118,
          index < std::min(bus118.count, bus118.epochs.size()); ++index) {
         const int64_t bus = bus118.epochs[index];
         if (bus < earliestBoard ||
-            !etaRowCurrent(bus118, index, nowEpoch, settings)) continue;
+            !etaRowPlanUsable(bus118, index, nowEpoch, settings)) continue;
         CommuteTripEstimate candidate;
         candidate.valid = true;
         candidate.firstLegValid = true;
         candidate.firstLegRideMinutes = settings.route118RideMinutes;
+        candidate.firstOperator = bus118.operators[index];
+        candidate.contextDegraded = bus118.contextImpacts[index].severity == ContextSeverity::Degraded;
         candidate.firstLegScheduled = bus118.scheduled[index];
         candidate.staleEvidence = bus118.rowStale[index] ||
             (bus118.stale && bus118.evidenceEpochs[index] == 0);
@@ -597,6 +618,8 @@ bool betterRecommendation(const CommuteRouteEstimate& candidate,
                           const CommuteRouteEstimate& current) {
     if (!candidate.primary.valid) return false;
     if (!current.primary.valid) return true;
+    if (candidate.primary.contextDegraded != current.primary.contextDegraded)
+        return !candidate.primary.contextDegraded;
     const bool candidateOnTime =
         candidate.assessment == CommuteAssessment::Safe ||
         candidate.assessment == CommuteAssessment::Tight;
@@ -706,16 +729,45 @@ void planCommuteDashboard(CommuteDashboardSnapshot& dashboard,
                           uint16_t localMinuteOfDay,
                           CommutePlannerDiagnostics* diagnostics) {
     const auto settings = sanitizeCommutePlannerSettings(requestedSettings);
+    dashboard.connectionEarlyAllowanceMinutes = settings.connectionEarlyAllowanceMinutes;
     dashboard.targetEpoch = targetEpoch;
     dashboard.weekday = weekday;
     dashboard.sessionMode = sessionMode;
     const bool recoveryMode =
         sessionMode == CommuteSessionMode::AutomaticRecovery;
+    dashboard.routeAContext = {};
+    dashboard.routeBContext = {};
+    dashboard.crowding8p = athleticMeetToday(dashboard.context, nowEpoch);
+    dashboard.contextStale = !contextFresh(dashboard.context.generatedEpoch, nowEpoch) ||
+                            dashboard.context.lastFetchFailed;
+    for (const auto& source : dashboard.context.sources)
+        dashboard.contextStale = dashboard.contextStale || source.coverage == 0 ||
+                                !contextFresh(source.fetchedEpoch, nowEpoch);
+    for (std::size_t stream = 0; stream < dashboard.etas.size(); ++stream) {
+        auto& eta = dashboard.etas[stream];
+        eta.contextImpacts = {};
+        auto& routeImpact = stream == 2 ? dashboard.routeBContext : dashboard.routeAContext;
+        for (std::size_t row = 0; row < std::min(eta.count, eta.epochs.size()); ++row) {
+            const int64_t bus = eta.epochs[row];
+            if (bus <= nowEpoch) continue;
+            const bool early = earlyProfileAt(bus, nowEpoch, weekday, localMinuteOfDay, settings);
+            const int64_t ride = stream == 0 ? (early ? settings.route106EarlyRideMinutes : settings.route106RideMinutes) :
+                                 stream == 1 ? (early ? settings.route8pEarlyRideMinutes : settings.route8pRideMinutes) : settings.route118RideMinutes;
+            eta.contextImpacts[row] = commuteContextImpact(dashboard.context,
+                static_cast<uint8_t>(stream), contextOperatorMask(eta.operators[row]),
+                bus, bus + ride * 60, nowEpoch);
+            if (eta.contextImpacts[row].severity > routeImpact.severity) routeImpact = eta.contextImpacts[row];
+        }
+        // Also report a scoped active notice when upstream has no usable rows.
+        const auto active = commuteContextImpact(dashboard.context, static_cast<uint8_t>(stream),
+            stream == 1 ? 1 : 3, nowEpoch, nowEpoch, nowEpoch);
+        if (active.severity > routeImpact.severity) routeImpact = active;
+    }
     dashboard.routeA = planRouteA(
         commuteEta(dashboard, CommuteEtaKind::Bus106),
         commuteEta(dashboard, CommuteEtaKind::Bus8P), nowEpoch, targetEpoch,
         settings, recoveryMode, weekday, localMinuteOfDay,
-        dashboard.routeAStatus, diagnostics);
+        dashboard.routeAStatus, diagnostics, dashboard.context);
     dashboard.routeB = planRouteB(
         commuteEta(dashboard, CommuteEtaKind::Bus118), nowEpoch, targetEpoch,
         settings, recoveryMode);

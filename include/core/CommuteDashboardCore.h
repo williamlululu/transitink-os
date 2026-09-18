@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 
+#include "core/CommuteContextCore.h"
 #include "core/CommuteSessionCore.h"
 #include "core/CommuteDateCore.h"
 
@@ -92,6 +93,7 @@ struct CommuteEtaSnapshot {
     std::array<uint8_t, kCommuteEtaCount> etaSequences{};
     std::array<bool, kCommuteEtaCount> scheduled{};
     std::array<bool, kCommuteEtaCount> rowStale{};
+    std::array<ContextImpact, kCommuteEtaCount> contextImpacts{};
     std::size_t count = 0;
     int64_t fetchedAtEpoch = 0;
     int64_t sourceGeneratedAtEpoch = 0;
@@ -120,6 +122,9 @@ struct CommuteTripEstimate {
     bool firstLegEarlyProfile = false;
     bool connectionEarlyProfile = false;
     bool connectionAtRisk = false;
+    bool contextDegraded = false;
+    uint8_t firstOperator = 255;
+    uint8_t connectionOperator = 255;
     uint16_t firstLegRideMinutes = 0;
     uint16_t connectionRideMinutes = 0;
     int64_t leaveHomeEpoch = 0;
@@ -216,6 +221,12 @@ struct JourneyEstimate {
 
 struct CommuteDashboardSnapshot {
     std::array<CommuteEtaSnapshot, kCommuteEtaStreamCount> etas{};
+    CommuteContextSnapshot context;
+    ContextImpact routeAContext;
+    ContextImpact routeBContext;
+    bool crowding8p = false;
+    bool contextStale = true;
+    uint16_t connectionEarlyAllowanceMinutes = 3;
     CommuteRouteEstimate routeA;
     CommuteRouteAStatus routeAStatus;
     CommuteRouteEstimate routeB;

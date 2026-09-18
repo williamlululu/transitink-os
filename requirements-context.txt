@@ -1,0 +1,2 @@
+# Host normalizer only. Never imported or embedded by ESP32 firmware.
+pypdf==6.10.0

@@ -241,9 +241,9 @@ class CommuteProductTests(unittest.TestCase):
     def test_chinese_dashboard_labels_and_utf8(self):
         display = read("src/EInkDisplay.cpp")
         labels = (
-            "建議", "立即", "趕此班出門", "預計到達", "8P下班", "可轉車",
+            "建議", "立即", "趕此班出門", "預計到達", "8P即時班次暫缺", "可轉車",
             "預計趕及", "轉車風險", "預計遲到", "資料過時", "現況",
-            "實測雨量未提供", "日PSR", "海底隧道", "漁灣邨", "九龍城",
+            "實測雨量未提供", "全日顯著雨機會", "B 118", "漁灣邨", "九龍城",
             "未校準", "現在出門", "非保證",
         )
         for label in labels:
@@ -302,7 +302,7 @@ class CommuteProductTests(unittest.TestCase):
         config = read("include/ProductConfig.h")
         match = re.search(r'^#define FIRMWARE_VERSION "([^"]+)"$', config, re.M)
         self.assertIsNotNone(match)
-        self.assertEqual("1.3.0", match.group(1))
+        self.assertEqual("1.3.1", match.group(1))
         self.assertRegex(match.group(1), r"^\d+\.\d+\.\d+$")
 
 

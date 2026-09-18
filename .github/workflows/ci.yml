@@ -49,10 +49,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install pinned tools
-        run: scripts/install_tools.sh
+        run: bash scripts/install_tools.sh
 
       - name: Audit Python build tools
-        run: scripts/audit_python_tools.sh
+        run: bash scripts/audit_python_tools.sh
 
       - name: Verify pinned Traditional Chinese glyph data
         run: .venv/bin/python scripts/generate_hk_glyph_font.py --check

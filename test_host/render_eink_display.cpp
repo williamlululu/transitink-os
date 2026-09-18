@@ -43,6 +43,7 @@ int main(int argc, char** argv) {
     setenv("TZ", "UTC0", 1); tzset();
 #endif
     assert(currentTimeText() == "06:10");
+    const time_t initialFixtureNow = fixtureNow;
     const auto epoch = [](int minutes) { return static_cast<int64_t>(fixtureNow) + minutes * 60; };
     std::filesystem::create_directories(argv[1]);
     EInkDisplay display;
@@ -56,7 +57,7 @@ int main(int argc, char** argv) {
         day.minimumHumidity = 65; day.maximumHumidity = 95; day.rainChanceTc = "中高";
         day.conditionTc = "間有陽光幾陣驟雨";
     }
-    assert(commuteRainText(forecast, weather) == "現況多雲／日PSR中高");
+    assert(commuteRainText(forecast, weather) == "現況多雲／全日顯著雨機會中高");
     assert(commuteRainText(forecast, weather).indexOf("無雨") < 0);
     transitink::CommuteDashboardSnapshot snapshot;
     snapshot.targetEpoch = epoch(75); snapshot.updatedAtEpoch = fixtureNow;
@@ -228,5 +229,85 @@ int main(int argc, char** argv) {
     assert(snapshot.routeA.assessment==transitink::CommuteAssessment::Unavailable);
     assert(routeAStateText(snapshot).indexOf("遲到")<0);
     save("16_planner_leave_now_risk.pbm");
-    std::cout << "16 production renderer previews; planner integration, semantic and partial/full parity checks passed\n";
+    // 1.3.1: all new fixtures pass production planner outputs to production UI.
+    fixtureNow=initialFixtureNow+10*60;
+    weather.updatedAt=fixtureNow;forecast.updatedAtEpoch=fixtureNow;
+    for(size_t i=0;i<forecast.dayCount;++i) {forecast.days[i].month=1;forecast.days[i].day=7+i;}
+    const auto normal = [&]() {
+        snapshot={};plannerSettings={};
+        snapshot.context.generatedEpoch=fixtureNow;
+        for(auto& source:snapshot.context.sources) {source.fetchedEpoch=fixtureNow;source.coverage=1;}
+        seedPlanner(transitink::CommuteEtaKind::Bus106,{10,16});
+        seedPlanner(transitink::CommuteEtaKind::Bus8P,{20,26,32});
+        seedPlanner(transitink::CommuteEtaKind::Bus118,{19});
+    };
+    const auto notice = [&]() {
+        transitink::CommuteContextEvent e;e.id="synthetic-victoria-park";
+        e.route=0;e.operatorMask=1;e.scope=transitink::ContextScope::Transfer;
+        e.severity=transitink::ContextSeverity::HardBlock;e.startEpoch=fixtureNow-60;
+        e.endEpoch=fixtureNow+86400;e.fetchedEpoch=fixtureNow;
+        e.towardYueWan=e.verified=true;e.messageTc="城巴106維園轉車站暫停";
+        return e;
+    };
+    const auto meetEvent = [&]() {
+        auto e=notice();e.id="synthetic-athletic-meet";e.athleticMeet=true;
+        e.route=1;e.severity=transitink::ContextSeverity::Advisory;
+        e.startEpoch=(fixtureNow+28800)/86400*86400-28800;e.endEpoch=e.startEpoch+86400;
+        return e;
+    };
+    normal();runPlanner(epoch(65));
+    assert(snapshot.routeA.primary.connectionEpoch==epoch(32));
+    assert(kCommuteRouteARegion.h>=3*kCommuteRouteBRegion.h);
+    assert(kCommuteFooterRegion.h>=34);
+    save("17_normal_morning_131.pbm");
+    const auto raw8p=snapshot.etas[1].epochs;
+    assert(snapshot.etas[1].count==3);
+    assert(connectionLabel(snapshot,0)=="較早，未能轉乘");
+    assert(connectionLabel(snapshot,1)=="可接但較趕");
+    assert(connectionLabel(snapshot,2)=="選乘這班");
+    assert(snapshot.routeA.primary.transferReadyEpoch==epoch(24));
+    save("18_three_visible_8p_selected.pbm");
+    normal();seedPlanner(transitink::CommuteEtaKind::Bus8P,{26,32,38});runPlanner(epoch(65));
+    assert(connectionLabel(snapshot,0)=="可接但較趕");
+    assert(connectionLabel(snapshot,1)=="選乘這班");
+    assert(connectionLabel(snapshot,2)=="後備接駁");
+    save("19_tight_earlier_safer_selected.pbm");
+    normal();snapshot.context.events[0]=notice();snapshot.context.count=1;runPlanner(epoch(65));
+    assert(!snapshot.routeA.primary.valid && snapshot.routeB.primary.valid);
+    assert(snapshot.recommendation==transitink::CommuteChoice::RouteB);
+    assert(snapshot.etas[1].epochs==raw8p);
+    assert(routeAStateText(snapshot)=="正常轉車受阻");
+    save("20_victoria_park_omitted.pbm");
+    normal();snapshot.context.events[0]=notice();snapshot.context.count=1;
+    snapshot.context.events[0].severity=transitink::ContextSeverity::Degraded;
+    snapshot.context.events[0].messageTc="城巴106維園站遷移，步程未核實";
+    runPlanner(epoch(65));assert(snapshot.routeA.primary.contextDegraded);
+    assert(snapshot.routeA.primary.transferReadyEpoch==epoch(24));
+    save("21_stop_relocation_degraded.pbm");
+    normal();snapshot.context.events[0]=meetEvent();snapshot.context.count=1;runPlanner(epoch(65));
+    assert(snapshot.crowding8p && snapshot.recommendation==transitink::CommuteChoice::RouteA);
+    save("22_athletic_meet_crowding.pbm");
+    snapshot.context.events[1]=notice();snapshot.context.count=2;runPlanner(epoch(65));
+    assert(snapshot.crowding8p && !snapshot.routeA.primary.valid);
+    save("23_disruption_and_crowding.pbm");
+    normal();seedPlanner(transitink::CommuteEtaKind::Bus106,{20});
+    seedPlanner(transitink::CommuteEtaKind::Bus8P,{53});runPlanner(epoch(65));
+    assert(snapshot.recommendation==transitink::CommuteChoice::RouteB);
+    assert(snapshot.routeB.primary.leaveHomeEpoch==epoch(4));
+    assert(snapshot.routeB.primary.arrivalEpoch==epoch(54));
+    save("24_compact_route_b_recommended.pbm");
+    normal();runPlanner(0);assert(snapshot.targetEpoch==0);
+    assert(routeAStateText(snapshot).indexOf("遲到")<0);save("25_leave_now_131.pbm");
+    normal();snapshot.context.generatedEpoch=fixtureNow-172800;
+    snapshot.context.events[0]=notice();snapshot.context.events[0].endEpoch=0;
+    snapshot.context.events[0].fetchedEpoch=fixtureNow-172800;snapshot.context.count=1;
+    runPlanner(epoch(65));assert(snapshot.contextStale && snapshot.routeA.primary.valid);
+    save("26_stale_context.pbm");
+    normal();snapshot.etas[0].partial=true;runPlanner(epoch(65));
+    assert(sourceAgeText(snapshot.etas[0])=="部分營辦商資料暫缺");
+    save("27_partial_provider_failure.pbm");
+    assert(commuteRainText(forecast,weather).indexOf("全日顯著雨機會")>=0);
+    assert(commuteRainText(forecast,weather).indexOf("PSR")<0);
+    save("28_weather_human_rain_probability.pbm",true);
+    std::cout << "28 production renderer previews; planner integration, semantic and partial/full parity checks passed\n";
 }
