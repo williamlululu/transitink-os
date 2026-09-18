@@ -759,7 +759,8 @@ void drawCommuteHeader(const transitink::CommuteDashboardSnapshot& snapshot,
                            kColorWhite);
     drawWifiIcon(260, 1, WiFi.status() == WL_CONNECTED, kColorWhite);
     drawBatteryIcon(288, 0, batteryMonitor.read(), kColorWhite);
-    drawAsciiText(316, 17, currentTimeText(), 2, kColorWhite);
+    // Keep the clock on the icon row; the full-width weather text uses row two.
+    drawAsciiText(316, 1, currentTimeText(), 2, kColorWhite);
     drawAsciiText(378, 3, "1/2", 1, kColorWhite);
 }
 

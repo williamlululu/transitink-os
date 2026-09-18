@@ -102,6 +102,26 @@ int main(int argc, char** argv) {
         if (forecastPage) display.refreshForecastHeader(forecast, weather);
         else { display.refreshCommuteHeader(snapshot, forecast, weather); display.refreshCommuteBody(snapshot, forecast, weather); }
         assert(std::equal(full.begin(), full.end(), frameBuffer));
+        if (!forecastPage) {
+            // Compare each entire header text rectangle against its isolated
+            // production rendering. This catches missing/clipped clock pixels
+            // and intrusion by other text, including the rc.1 weather overlap.
+            const auto assertIsolated = [&](const DisplayRegion& region) {
+                for (int y=region.y; y<region.y+region.h; ++y)
+                    for (int x=region.x; x<region.x+region.w; ++x) {
+                        const auto index=y*kBytesPerRow+x/8;
+                        const uint8_t mask=static_cast<uint8_t>(0x80U>>(x%8));
+                        assert((full[index]&mask)==(frameBuffer[index]&mask));
+                    }
+            };
+            canvas.fillScreen(kColorBlack);
+            drawAsciiText(316,1,currentTimeText(),2,kColorWhite);
+            assertIsolated({316,1,60,16});
+            canvas.fillScreen(kColorBlack);
+            drawTruncatedTextColor(126,32,commuteRainText(forecast,weather),264,kColorWhite);
+            assertIsolated({126,18,264,16});
+            std::copy(full.begin(),full.end(),frameBuffer);
+        }
         std::ofstream out(std::filesystem::path(argv[1]) / name, std::ios::binary);
         out << "P4\n400 300\n";
         for (uint8_t pixel : frameBuffer) out.put(static_cast<char>(~pixel));
