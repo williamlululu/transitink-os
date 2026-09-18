@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import unittest
 import zipfile
 
@@ -16,7 +17,17 @@ class ContextTests(unittest.TestCase):
     def test_context_json_contract(self):
         explicit=os.environ.get('TRANSITINK_TEST_JSON_INCLUDE')
         candidates=[Path(explicit)] if explicit else list((ROOT/'.pio/libdeps').glob('*/ArduinoJson/src'))
-        self.assertTrue(candidates, 'Install pinned firmware/native ArduinoJson dependency before JSON contract test')
+        if not explicit and not candidates:
+            # A clean CI checkout runs tests before its first firmware build.
+            # Resolve the existing pinned dependencies rather than relying on
+            # another test's execution order or a developer's .pio cache.
+            local_python=ROOT/'.venv'/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
+            pio_python=str(local_python) if local_python.is_file() else sys.executable
+            env=os.environ.copy();env.setdefault('PLATFORMIO_CORE_DIR',str(ROOT/'.platformio'))
+            subprocess.run([pio_python,'-m','platformio','pkg','install','-e','zectrix_note4'],
+                           cwd=ROOT,env=env,check=True)
+            candidates=list((ROOT/'.pio/libdeps').glob('*/ArduinoJson/src'))
+        self.assertTrue(candidates, 'Pinned ArduinoJson dependency resolution failed')
         build=ROOT/'.test-build';build.mkdir(exist_ok=True);binary=build/'test_commute_context_json'
         subprocess.run(['c++','-std=c++17','-Wall','-Wextra','-Werror','-Iinclude','-I'+str(candidates[0]),
             'test_host/test_commute_context_json.cpp','-o',str(binary)],cwd=ROOT,check=True)
