@@ -61,7 +61,9 @@ jobs:
         run: .venv/bin/python scripts/generate_transit_route_catalog.py --check
 
       - name: Run tests
-        run: python3 -m unittest discover -s tests -p "test_*.py" -q
+        run: |
+          python3 -m pip install -r requirements-context.txt
+          python3 -m unittest discover -s tests -p "test_*.py" -q
 
       - name: Build ESP32-S3 firmware
         run: PLATFORMIO_CORE_DIR="$PWD/.platformio" .venv/bin/platformio run -e zectrix_note4

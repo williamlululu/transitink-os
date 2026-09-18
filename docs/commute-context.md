@@ -7,7 +7,7 @@ and human-readable Traditional Chinese. It does not establish field ETA accuracy
 
 ## Collection and actual coverage
 
-`scripts/build_commute_context.py` uses Python 3 standard library plus pinned host-only `pypdf==6.10.0` for KMB PDFs. It emits
+`scripts/build_commute_context.py` uses Python 3 standard library plus pinned host-only `pypdf==6.10.0` for KMB and Citybus PDFs. It emits
 schema 1 JSON, maximum 24 events / 24 KiB, from official public sources:
 
 - Citybus: https://mobile.citybus.com.hk/NWST/special-arrangement-listing.php
@@ -15,7 +15,28 @@ schema 1 JSON, maximum 24 events / 24 KiB, from official public sources:
   physical Siu Sai Wan direction and a single explicit full-date interval produce
   planner effects. Omitted stops without a replacement are hard blocks; replacement
   or relocated stops are degraded. Unresolved date/time/recurrence/direction/body
-  formats are counted and not guessed. Separate Citybus PDF notices are not covered.
+  formats are counted and not guessed.
+  Customer Notices are independently discovered from the official route Notice
+  table at `https://mobile.citybus.com.hk/nwp3/getnotice.php?id=ROUTE&l=1`
+  for each of 106, 8P and 118. The official route UI exposes this endpoint via
+  `getnotice1(route)`. Only literal links inside `noticeitemlist` to the exact
+  official `/pdf/` path are accepted; legacy HTTP links are upgraded to HTTPS.
+  Links are deduplicated, limited to 30 per route and 12 unique PDF fetches per run.
+  No specific notice URL, notice date, search-engine discovery or JavaScript
+  execution is embedded. One discovery channel failing does not discard others.
+  The host uses pinned PDF layout extraction, accepting single-page bilingual
+  dated omission/suspended-stop/explicit forward-backward relocation tables.
+  Chinese and English start/end times must agree, route lists must match exact
+  tokens, and physical directions must be shared or paired in route-list order.
+  Exact bilingual critical-stop aliases are checked in the operative row, not
+  the title. Posting dates, replacement maps, image route badges, recurrence,
+  open-ended periods, cancellation, conflicting languages and unsupported
+  layouts remain unparsed. Citybus events always have operator mask 1.
+  In particular a general 8P station-allocation map with a 106 omission footnote
+  does not suspend 8P. A missing text route badge in an otherwise legible PDF
+  is not supplied by inference from its index. Coverage remains partial.
+  Diagnostics distinguish unavailable channels, unparsed links/documents and
+  recognized active/inactive notices; an empty result is not full coverage.
 - KMB: the official route site's `MapFunction.js` exposes
   `Function/FunctionRequest.ashx?action=getroutebound&route=...` and `getAnnounce`.
   Actual discovery was verified for 106 and 118. Available bound IDs are read from

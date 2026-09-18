@@ -20,6 +20,7 @@ import zipfile
 
 HKT = dt.timezone(dt.timedelta(hours=8))
 CITYBUS = 'https://mobile.citybus.com.hk/NWST/special-arrangement-listing.php'
+CITYBUS_NOTICES = 'https://mobile.citybus.com.hk/nwp3/getnotice.php'
 LCSD = 'https://www.lcsd.gov.hk/clpss/en/webApp/Facility/Details.do?ftid=38&did=2'
 KMB = 'https://search.kmb.hk/KMBWebSite/Function/FunctionRequest.ashx'
 ALLOWED = {'mobile.citybus.com.hk', 'search.kmb.hk', 'www.lcsd.gov.hk'}
@@ -131,6 +132,201 @@ def kmb_pdf_text(data):
         raise ValueError('Unsupported official notice PDF') from error
     if len(text)>64000:raise ValueError('Notice text limit')
     return text
+
+class CitybusNoticeLinks(HTMLParser):
+    """Read links in the official route Notice table, never execute its JS."""
+    def __init__(self):
+        super().__init__(); self.depth=0; self.found=False; self.urls=set(); self.invalid=0
+    def handle_starttag(self, tag, attrs):
+        attrs=dict(attrs)
+        if tag=='table':
+            if self.depth: self.depth+=1
+            elif attrs.get('id')=='noticeitemlist': self.depth=1; self.found=True
+        if not self.depth:return
+        links=[]
+        if tag=='a' and attrs.get('href'):links.append(attrs['href'])
+        for key in ('onclick','onkeypress'):
+            # This is the literal window.open used by Citybus, not arbitrary JS.
+            links+=re.findall(r"window\.open\(\s*['\"]([^'\"]+)['\"]\s*\)",attrs.get(key,''))
+        for link in links:
+            url=urllib.parse.urlsplit(urllib.parse.urljoin(CITYBUS_NOTICES,link))
+            if (url.scheme not in ('http','https') or url.netloc!='mobile.citybus.com.hk'
+                    or not re.fullmatch(r'/pdf/[A-Za-z0-9_-]{1,64}\.pdf',url.path)
+                    or url.query or url.fragment):
+                self.invalid+=1;continue
+            # The legacy keyboard link says http; fetch only HTTPS on this exact host.
+            self.urls.add('https://mobile.citybus.com.hk'+url.path)
+    def handle_endtag(self,tag):
+        if tag=='table' and self.depth:self.depth-=1
+
+def discover_citybus(route, request=fetch):
+    if route not in ROUTES:raise ValueError('Unsupported route')
+    page=request(CITYBUS_NOTICES+'?id='+route+'&l=1').decode('utf-8-sig')
+    parser=CitybusNoticeLinks();parser.feed(page)
+    if not parser.found:raise ValueError('Citybus Notice table unavailable')
+    urls=sorted(parser.urls)
+    return ([{'route':route,'source_url':url,'notice_id':url.rsplit('/',1)[1][:-4]}
+             for url in urls[:30]], parser.invalid+max(0,len(urls)-30))
+
+def citybus_pdf_text(data):
+    """A single-page text table only. Layout extraction keeps split digits together.
+
+    Image/OCR, multi-page and arbitrarily positioned multi-table notices fail closed.
+    Keep the existing KMB extraction path unchanged.
+    """
+    import pypdf
+    if pypdf.__version__!='6.10.0':raise ValueError('Use pinned context PDF dependency')
+    try:
+        reader=pypdf.PdfReader(io.BytesIO(data),strict=True)
+        if len(reader.pages)!=1:raise ValueError('Unsupported Citybus page count')
+        text=reader.pages[0].extract_text(extraction_mode='layout') or ''
+    except (pypdf.errors.PyPdfError,RecursionError,IndexError,KeyError) as error:
+        raise ValueError('Unsupported Citybus PDF') from error
+    if not text or len(text)>64000:raise ValueError('Citybus text limit')
+    return text
+
+def citybus_notice_period(text):
+    """Require one explicit continuous HKT period, with matching bilingual times.
+
+    Publication/posting dates are not validity. No recurrence, inferred year,
+    first/last bus, until-further-notice, or OCR repairs are accepted.
+    """
+    compact=re.sub(r'\s+','',text)
+    for label in ('日期及時間','Date&Period','DateandTime','生效時間','Effectivetime'):
+        compact=compact.replace(label,'')
+    if re.search(r'每日|每天|逢|頭班|尾班|另行|除外|只限|僅限|恢復|已取消|取消安排|daily|except|each|until further|cancelled|canceled|withdrawn|resumed',text,re.I):return None
+    date=r'(20\d{2})年(\d{1,2})月(\d{1,2})日(?:[（(]星期[一二三四五六日天][）)])?(上午|下午|中午)(\d{1,2})時(?:(\d{1,2})分|正)?'
+    matches=re.findall(date+r'(?:起)?至'+date+r'(?:止)?',compact)
+    if len(matches)!=1:return None
+    def epoch(p):
+        year,month,day,ampm,hour,minute=p;hour=int(hour)
+        if not 1<=hour<=12 or (ampm=='中午' and hour!=12):raise ValueError('Unsupported hour')
+        return int(dt.datetime(int(year),int(month),int(day),hour%12+(12 if ampm!='上午' else 0),int(minute or 0),tzinfo=HKT).timestamp())
+    try:
+        start,end=epoch(matches[0][:6]),epoch(matches[0][6:])
+        # Independently cross-check the English period when supplied. Whitespace
+        # inside a four-digit year is a PDF glyph spacing artifact, not a new year.
+        edate=r'(\d{1,2}):(\d{2})\s*([ap])\.?m\.?\s+on\s+(\d{1,2})\s+([A-Za-z]+)\s+(20\s*\d\s*\d)\s*\([A-Za-z]+\s*\)'
+        periods=re.findall(r'\bFrom\s+'+edate+r'\s+to\s+'+edate,' '.join(text.split()),re.I)
+        if len(periods)!=1:return None
+        months={name:i+1 for i,name in enumerate(('january','february','march','april','may','june','july','august','september','october','november','december'))}
+        def english(p):
+            hour,minute,ampm,day,month,year=p;hour=int(hour)
+            if not 1<=hour<=12:raise ValueError('Unsupported hour')
+            return int(dt.datetime(int(re.sub(r'\s','',year)),months[month.lower()],int(day),hour%12+(12 if ampm.lower()=='p' else 0),int(minute),tzinfo=HKT).timestamp())
+        if (start,end)!=(english(periods[0][:6]),english(periods[0][6:])):return None
+    except (ValueError,KeyError):return None
+    return (start,end) if 0<end-start<=366*86400 else None
+
+def citybus_notice_event(text,record,now):
+    """Supported bilingual single-table omission/suspension/relocation formats.
+
+    Match the operative row, never a title, route substring, map or another
+    route's footnote. Routes/directions must map one-to-one, or have one shared
+    physical direction. An indexed document is not itself a route effect.
+    """
+    route=record['route'];compact=re.sub(r'\s+','',text)
+    if route not in ROUTES or 'CustomerNotice' not in compact or 'CitybusLimited' not in compact:return None
+    period=citybus_notice_period(text)
+    if period is None:return None
+    headers=re.findall(r'^[ \t]*路線[ \t]+Routes?[ \t]*([^\r\n]+)$',text,re.M)
+    if len(headers)!=1:return None
+    headers=[re.sub(r'\s+','',headers[0])]
+    if not re.fullmatch(r'\d{1,3}[A-Z]?(?:[,，]\d{1,3}[A-Z]?)*',headers[0]):return None
+    routes=re.split('[,，]',headers[0])
+    if len(set(routes))!=len(routes) or route not in routes:return None
+    direction_rows=re.findall(r'^[ \t]*方向[ \t]*(?:Direction[ \t]*)?([^\r\n]+)$',text,re.M)
+    directions=[]
+    for row in direction_rows:
+        match=re.match(r'([\u4e00-\u9fff（）()/／]+)',re.sub(r'\s+','',row))
+        if match:directions.append(match[1])
+    if len(directions)!=1:return None
+    bounds=re.split('[/／]',directions[0])
+    if len(bounds)==1:bound=bounds[0]
+    elif len(bounds)==len(routes):bound=bounds[routes.index(route)]
+    else:return None
+    if bound not in ('小西灣','小西灣(藍灣半島)','小西灣（藍灣半島）'):return None
+    aliases_direction={'小西灣':'SiuSaiWan','筲箕灣':'ShauKeiWan',
+        '小西灣(藍灣半島)':'SiuSaiWan(IslandResort)','小西灣（藍灣半島）':'SiuSaiWan(IslandResort)'}
+    if any(b not in aliases_direction for b in bounds):return None
+    block=re.split('巴士站安排|停用巴士站',compact.split('方向',1)[1],maxsplit=1)[0]
+    # Verify the second language too, including the order of paired directions.
+    # PDF glyph spacing is removed, but no words/directions are invented.
+    if block.count('Direction')!=1:return None
+    english_bounds=block.replace(directions[0],'',1).replace('Direction','',1).replace('／','/')
+    if english_bounds!='/'.join(aliases_direction[b] for b in bounds):return None
+    # Require a single operative section; multi-table and per-route exceptions
+    # are deliberately not flattened into an all-routes stop suspension.
+    if compact.count('巴士站安排')==1 and '停用巴士站' not in compact:
+        matches=re.findall(r'上述期間不停([\u4e00-\u9fff，,（）()]+)巴士站',compact)
+        if len(matches)!=1 or compact.count('不停')!=1:return None
+        stop=matches[0]
+        sentence=text.replace('Arrangement','')
+        english=re.findall(r'^\s*(?:Bus Stop\s+)?Omit\s+(.+?)\s+bus stop\s+during the said period\.',sentence,re.I|re.M|re.S)
+        if len(english)!=1:return None
+        effect='stop_omitted'
+    elif compact.count('停用巴士站')==1 and compact.count('臨時巴士站')==1:
+        section=compact.split('停用巴士站',1)[1].split('臨時巴士站',1)[0]
+        section=section.replace('SuspendedBusStop','')
+        match=re.fullmatch(r'(?:SuspendedBusStop)?([\u4e00-\u9fff，,（）()]+)([A-Za-z ,’\'-]+)',section)
+        if not match:return None
+        stop=match[1];english=[match[2]]
+        replacement=compact.split('臨時巴士站',1)[1].split('不便之處',1)[0]
+        if re.fullmatch(r'(?:TemporaryBusStop)?不設臨時站NoTemporaryBusStop\.?',replacement,re.I):effect='stop_omitted'
+        elif re.fullmatch(r'(?:TemporaryBusStop)?[前後]移約\d{1,3}米Relocated(?:forward|backward)forabout\d{1,3}metres\.?',replacement,re.I):effect='stop_relocated'
+        else:return None
+    else:return None
+    aliases={
+        '高士威道維多利亞公園外':('Causeway Road outside Victoria Park','Victoria Park, Causeway Road'),
+        '維多利亞公園，高士威道':('Causeway Road outside Victoria Park','Victoria Park, Causeway Road'),
+        '紅磡街市':('Hung Hom Market',),
+        '紅磡海底隧道收費廣場':('Cross Harbour Tunnel Toll Plaza',),
+        '漁灣邨':('Yue Wan Estate',),
+    }
+    if stop not in aliases:return None
+    en=re.sub(r'\s+','',english[0]).casefold()
+    if en not in {re.sub(r'\s+','',a).casefold() for a in aliases[stop]}:return None
+    scope=critical_scope(route,stop)
+    if scope is None:return None
+    start,end=period
+    return {'id':'ctb-pdf-'+hashlib.sha256((record['source_url']+route+scope).encode()).hexdigest()[:16],
+        'source':'citybus','source_url':record['source_url'],'notice_id':record['notice_id'],
+        'fetched_at':now,'route':route,'direction':'toward_yue_wan','operator_mask':1,
+        'scope':scope,'stop_name_tc':stop_name(route,scope),'effect':effect,'start':start,'end':end,
+        'severity':'hard_block' if effect=='stop_omitted' else 'degraded','verified':True,
+        'message_tc':'城巴'+route+('維園轉車站' if scope=='transfer' else '所需車站')+('暫停' if effect=='stop_omitted' else '改動，步程待核實')}
+
+def citybus_context(now,request):
+    events=[];details=[];unparsed=0;success=0;cache={}
+    try:
+        batch,unmatched=citybus_events(request(CITYBUS).decode('utf-8'),now)
+        events+=batch;unparsed+=unmatched;success+=1
+        details.append({'channel':'structured','status':'fetched','unparsed':unmatched})
+    except (OSError,ValueError,KeyError,TypeError):
+        details.append({'channel':'structured','status':'unavailable'});unparsed+=1
+    for route in ROUTES:
+        try:
+            records,unmatched=discover_citybus(route,request);success+=1;unparsed+=unmatched
+            details.append({'channel':'notices','route':route,'status':'fetched','discovered':len(records),'unparsed_links':unmatched})
+        except (OSError,ValueError,KeyError,TypeError):
+            details.append({'channel':'notices','route':route,'status':'unavailable'});unparsed+=1;continue
+        for record in records:
+            url=record['source_url'];reason='unsupported_format';event=None
+            try:
+                if url not in cache:
+                    if len(cache)>=12:raise ValueError('Citybus PDF fetch limit')
+                    cache[url]=None  # failed/unsupported URLs also consume the bound
+                    raw=request(url);cache[url]=(citybus_pdf_text(raw),hashlib.sha256(raw).hexdigest())
+                if cache[url] is not None:event=citybus_notice_event(cache[url][0],record,now)
+                if event:
+                    event['source_sha256']=cache[url][1];events.append(event)
+                    reason='recognized_active' if event['start']<=now<event['end'] else 'recognized_inactive'
+            except (OSError,ValueError,KeyError,TypeError,ImportError):reason='fetch_or_parse_unavailable'
+            if event is None:unparsed+=1
+            if len(details)<18:details.append({'route':route,'notice_id':record['notice_id'],'status':reason})
+    return events,{'source':'citybus','coverage':'partial' if success else 'unavailable',
+        'fetched_at':now if success else 0,'unparsed':unparsed,
+        'limitation':'Official structured listing plus dynamically discovered Customer Notice PDFs. Strict bilingual dated single-table omission/relocation only; maps, image route badges, recurrence and other formats remain unparsed. Citybus only.'},details
 
 def citybus_events(html, now):
     parser=Tables(); parser.feed(html)
@@ -244,9 +440,8 @@ def build(now, request=fetch):
         status={'source':source,'coverage':'unavailable','fetched_at':0,'unparsed':0}
         try:
             if source=='citybus':
-                batch,unparsed=citybus_events(request(CITYBUS).decode('utf-8'),now)
-                events+=batch;status.update(coverage='partial',unparsed=unparsed,
-                    limitation='Structured listing with unambiguous physical stop/direction and full-date interval only; separate PDF notices not covered.')
+                batch,status,details=citybus_context(now,request)
+                events+=batch;diagnostics['citybus_notices']=details
             elif source=='kmb':
                 notices=discover_kmb('106',request)+discover_kmb('118',request)
                 diagnostics['kmb_notices']=notices[:12]
@@ -274,7 +469,7 @@ def build(now, request=fetch):
                     batch,unmatched=lcsd_events(request(link),link,now);events+=batch;unparsed+=unmatched
                 status.update(coverage='partial' if unparsed else 'supported',unparsed=unparsed,
                     limitation='Explicit dated Athletic Meet detail rows only; general booking letters are not specific enough. Bookings can change.')
-            status['fetched_at']=now
+            if source!='citybus':status['fetched_at']=now
         except (OSError,ValueError,KeyError,TypeError,ET.ParseError,zipfile.BadZipFile) as error:
             status['error']=type(error).__name__  # no raw body or private environment output
         sources.append(status)
