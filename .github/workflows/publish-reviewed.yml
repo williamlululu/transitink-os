@@ -11,7 +11,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: publish-reviewed-v1.3.0
+  group: publish-reviewed-v1.3.1
   cancel-in-progress: false
 
 jobs:

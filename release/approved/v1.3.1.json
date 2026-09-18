@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "tag": "v1.3.1",
+  "version": "1.3.1",
+  "board": "zectrix_note4",
+  "source_checkpoint": "87ef2e7d3d65fac594de5e8ada9e725865cd8e29",
+  "source_tree": "7163e26123086af8e656a501f7f1970a647c73d7",
+  "artifacts": {
+    "ota": {
+      "path": "firmware/transitink-zectrix-note4-ota-v1.3.1.bin",
+      "size": 3847920,
+      "sha256": "e41031687e8bf58493b9222f00b74eabe64f07fd9549fd8b36642f62e18e288c"
+    },
+    "merged": {
+      "path": "firmware/transitink-zectrix-note4-v1.3.1.bin",
+      "size": 3913456,
+      "sha256": "f0a41d71ca54eff1acadc141cab1cc3bd9c1ec1b91dcd16084dfd9ebf501838d"
+    },
+    "bundle": {
+      "path": "transitink-zectrix-note4-v1.3.1.zip",
+      "size": 6374757,
+      "sha256": "d6800acb30eb00337c7ab2a87787b55e3cf364908000c44249a1885aebd2ca9e"
+    },
+    "ota_manifest": {
+      "path": "ota-manifest.json",
+      "size": 280,
+      "sha256": "11d9b67505341ee9c8d791a5f09fb496b37aa685b432dc08bae0a5bf9eb8c673"
+    },
+    "release_metadata": {
+      "path": "release-metadata.json",
+      "size": 465,
+      "sha256": "23738cc387132d63ea7d967cd872acd55217398d74c55fa636d6a5159492b0e5"
+    },
+    "checksums": {
+      "path": "SHA256SUMS.txt",
+      "size": 210,
+      "sha256": "797a8c99337142782b3ba9b616a52d80a75bfa5b9457103b1b5b6a9147ae839b"
+    }
+  },
+  "status": "Owner authorized exact reviewed bytes; device OTA additionally requires live context and device preflight gates"
+}

@@ -7,9 +7,14 @@ on:
       - "installer/**"
       - "scripts/assemble_installer_pages.py"
       - "scripts/verify_release_approval.py"
+      - "scripts/build_commute_context.py"
+      - "scripts/validate_context_publication.py"
+      - "requirements-context.txt"
       - "release/approved/**"
       - ".github/workflows/installer-pages.yml"
   workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
 
 permissions: {}
 
@@ -69,6 +74,17 @@ jobs:
             --approval "release/approved/${RELEASE_TAG}.json" \
             --installer-dir dist/installer \
             --source-tree "$RELEASE_SOURCE_TREE"
+
+      - name: Set up pinned host context environment
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Generate and validate bounded official public context
+        run: |
+          python3 -m pip install -r requirements-context.txt
+          python3 scripts/build_commute_context.py --output dist/installer/commute-context.json
+          python3 scripts/validate_context_publication.py dist/installer/commute-context.json
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
