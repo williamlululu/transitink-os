@@ -31,6 +31,9 @@ int main(){
     assert(a.routeA2.nominalFastest.connectionEpoch==now+26*60&&a.routeA2.nominalFastest.connectionAtRisk);
     assert(a.routeA2.fallback.connectionEpoch==now+37*60);
     assert(a.etas[3].epochs==base.etas[3].epochs&&a.etas[0].epochs==base.etas[0].epochs);
+    auto partial=a;partial.etas[0].partial=partial.etas[0].stale=true;
+    plan(partial);assert(partial.routeA2.primary.valid); // Other operator failure does not age this row.
+    partial.etas[0].rowStale.fill(true);plan(partial);assert(!partial.routeA2.primary.valid);
     auto joint=a;joint.etas[0].operators[1]=0;plan(joint);
     assert(joint.routeA.primary.valid&&joint.routeA.primary.firstOperator==0);
     assert(joint.routeA2.primary.firstOperator==2);

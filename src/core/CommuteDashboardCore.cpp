@@ -586,7 +586,8 @@ CommuteRouteEstimate planRouteA2(const CommuteDashboardSnapshot& dashboard,
             !context.sources[0].coverage || !contextFresh(context.sources[0].fetchedEpoch,now)) continue;
         const auto bus=first.epochs[i];
         if (bus<now+(settings.routeAWalkMinutes+settings.boardingBufferMinutes)*60 ||
-            !etaRowCurrent(first,i,now,settings) || first.rowStale[i] || first.stale) continue;
+            !etaRowCurrent(first,i,now,settings) || first.rowStale[i] ||
+            (first.stale && first.evidenceEpochs[i]==0)) continue;
         bool activated=false;
         const auto normalArrival=firstLegEstimate(bus,now,weekday,localMinute,settings).transferArrivalEpoch;
         for (std::size_t n=0;n<std::min(context.count,context.events.size());++n) {
