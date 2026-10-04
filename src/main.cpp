@@ -345,18 +345,29 @@ void recalculateCommutePlan() {
     for(std::size_t i=0;i<context.sources.size();++i)
         Serial.printf("Commute context_source=%u coverage=%u fetched=%lld\n",static_cast<unsigned>(i),
             context.sources[i].coverage,static_cast<long long>(context.sources[i].fetchedEpoch));
+    const auto& alternate=commuteDashboardSnapshot.routeA2;
+    const auto& alt=alternate.primary;
+    Serial.printf("Commute A2 active=%u reason=%s operator=%u ngan_mok=%s hing_fat=001251 first=%lld expected_ngan=%lld risk_ngan=%lld walk_minutes=4 ready=%lld risk_ready=%lld selected8p=%lld tight=%u fastest8p=%lld safer8p=%lld arrival=%lld risk_arrival=%lld checked_mask=%u\n",
+        alt.valid,commuteDashboardSnapshot.alternateReason.c_str(),alt.firstOperator,
+        alt.firstOperator==0?"834CC2324AAFB567":"001259",
+        static_cast<long long>(alt.firstBusEpoch),static_cast<long long>(alt.transferArrivalEpoch),
+        static_cast<long long>(alt.firstLegValid?alt.firstBusEpoch+14*60:0),
+        static_cast<long long>(alt.transferReadyEpoch),static_cast<long long>(alt.riskTransferReadyEpoch),
+        static_cast<long long>(alt.connectionEpoch),alt.connectionAtRisk,
+        static_cast<long long>(alternate.nominalFastest.connectionEpoch),static_cast<long long>(alternate.fallback.connectionEpoch),
+        static_cast<long long>(alt.arrivalEpoch),static_cast<long long>(alt.riskArrivalEpoch),context.alternateCheckedMask);
     // Bounded retained rows only: public stop ETA/context evidence, no settings,
     // calendar labels, SSID, credentials or entire upstream JSON.
     for (std::size_t stream=0; stream<commuteDashboardSnapshot.etas.size(); ++stream) {
         const auto& eta=commuteDashboardSnapshot.etas[stream];
         for (std::size_t row=0; row<eta.count; ++row) {
             const auto& impact=eta.contextImpacts[row];
-            const auto& trip=stream==2?commuteDashboardSnapshot.routeB.primary:commuteDashboardSnapshot.routeA.primary;
-            const bool selected=stream==1?trip.connectionConfirmed && trip.connectionEpoch==eta.epochs[row]:trip.firstLegValid && trip.firstBusEpoch==eta.epochs[row] && trip.firstOperator==eta.operators[row];
+            const auto& trip=stream==3?commuteDashboardSnapshot.routeA2.primary:stream==2?commuteDashboardSnapshot.routeB.primary:commuteDashboardSnapshot.routeA.primary;
+            const bool selected=(stream==1 || stream==3)?trip.connectionConfirmed && trip.connectionEpoch==eta.epochs[row]:trip.firstLegValid && trip.firstBusEpoch==eta.epochs[row] && trip.firstOperator==eta.operators[row];
             const char* decision=impact.severity==transitink::ContextSeverity::HardBlock?"official_block":
                 eta.epochs[row]<=now?"expired":now-eta.evidenceEpochs[row]>deviceConfig.commutePlanner.maximumEtaAgeMinutes*60?"stale":
-                selected?"selected":stream==1 && trip.firstLegValid && eta.epochs[row]<trip.transferReadyEpoch?"before_transfer_ready":
-                stream!=1 && eta.epochs[row]<now+(stream==0?deviceConfig.commutePlanner.routeAWalkMinutes:deviceConfig.commutePlanner.routeBWalkMinutes)*60+deviceConfig.commutePlanner.boardingBufferMinutes*60?"before_boarding_ready":"retained_alternative";
+                selected?"selected":(stream==1 || stream==3) && trip.firstLegValid && eta.epochs[row]<trip.transferReadyEpoch?"before_transfer_ready":
+                stream!=1 && stream!=3 && eta.epochs[row]<now+(stream==0?deviceConfig.commutePlanner.routeAWalkMinutes:deviceConfig.commutePlanner.routeBWalkMinutes)*60+deviceConfig.commutePlanner.boardingBufferMinutes*60?"before_boarding_ready":"retained_alternative";
             Serial.printf("Commute cycle=%lld stream=%u row=%u operator=%u eta=%lld evidence=%lld requested=%lld generated=%lld data=%lld scheduled=%u decision=%s context=%s severity=%u\n",
                 static_cast<long long>(now),static_cast<unsigned>(stream),static_cast<unsigned>(row),eta.operators[row],
                 static_cast<long long>(eta.epochs[row]),static_cast<long long>(eta.evidenceEpochs[row]),
@@ -554,8 +565,8 @@ void refreshCommuteBusesNow(bool render) {
     String error;
     bool ok = false;
     if (WiFi.status() == WL_CONNECTED) {
-        ok = commuteBusClient.refresh(commuteDashboardSnapshot, nowEpoch, error);
         commuteContextClient.refresh(commuteDashboardSnapshot.context, nowEpoch);
+        ok = commuteBusClient.refresh(commuteDashboardSnapshot, nowEpoch, error);
     } else {
         transitink::initializeCommuteBusRows(commuteDashboardSnapshot);
         const std::string offline =

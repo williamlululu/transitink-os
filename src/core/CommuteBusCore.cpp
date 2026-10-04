@@ -36,6 +36,8 @@ const std::array<CommuteBusFeedConfig, kCommuteEtaStreamCount> kConfigs = {{
     {citybusConfig("118", "001476", "紅磡海底隧道收費廣場"), 16, 27,
      "001224", "C564EDC91AFD7D04", "O", "1", 16,
      CommutePhysicalDirection::TowardYueWan},
+    {citybusConfig("8P", "001251", "興發街"), 6, 9, "001224",
+     nullptr, nullptr, nullptr, 0, CommutePhysicalDirection::TowardYueWan},
 }};
 
 bool recordMatches(const BusEtaRecord& record,

@@ -66,6 +66,20 @@ bool CommuteBusClient::refresh(
     const auto& configs = transitink::commuteBusFeedConfigs();
 
     for (std::size_t index = 0; index < configs.size(); ++index) {
+        if (index == transitink::commuteEtaIndex(transitink::CommuteEtaKind::Bus8PHingFat)) {
+            bool needed=false;
+            const auto& context=dashboard.context;
+            if (context.alternateCheckedMask && transitink::contextFresh(context.generatedEpoch,nowEpoch) && !context.lastFetchFailed) {
+                for (std::size_t i=0;i<std::min(context.count,context.events.size());++i) {
+                    const auto& e=context.events[i];
+                    if (e.verified && e.towardYueWan && !e.athleticMeet && e.severity>=transitink::ContextSeverity::Degraded &&
+                        e.startEpoch<=nowEpoch && nowEpoch<e.endEpoch &&
+                        ((e.route==0 && e.scope==transitink::ContextScope::Transfer) ||
+                         (e.route==1 && e.scope==transitink::ContextScope::Boarding))) needed=true;
+                }
+            }
+            if (!needed) continue; // Normal operation retains its original provider polling workload.
+        }
         const auto kind = static_cast<transitink::CommuteEtaKind>(index);
         const auto& config = configs[index];
         std::vector<transitink::BusEtaRecord> combined;

@@ -23,7 +23,7 @@ CITYBUS = 'https://mobile.citybus.com.hk/NWST/special-arrangement-listing.php'
 CITYBUS_NOTICES = 'https://mobile.citybus.com.hk/nwp3/getnotice.php'
 LCSD = 'https://www.lcsd.gov.hk/clpss/en/webApp/Facility/Details.do?ftid=38&did=2'
 KMB = 'https://search.kmb.hk/KMBWebSite/Function/FunctionRequest.ashx'
-ALLOWED = {'mobile.citybus.com.hk', 'search.kmb.hk', 'www.lcsd.gov.hk'}
+ALLOWED = {'mobile.citybus.com.hk', 'search.kmb.hk', 'www.lcsd.gov.hk', 'rt.data.gov.hk', 'data.etabus.gov.hk'}
 ROUTES = {'106': 0, '8P': 1, '118': 2}
 MAX_BYTES = 2_000_000
 MAX_EVENTS = 24
@@ -74,23 +74,33 @@ def interval(text):
     if not 0 < (end-start).days <= 366: return None
     return int(start.timestamp()),int(end.timestamp())
 
-def critical_scope(route, text):
-    # Physical stop aliases, not interchangeable provider stop/direction codes.
-    if route == '106' and ('維多利亞公園' in text or 'Victoria Park' in text) and ('高士威道' in text or 'Causeway Road' in text):
-        return 'transfer'
-    if route == '106' and ('紅磡街市' in text or 'Hung Hom Market' in text): return 'boarding'
-    if route == '8P' and ('維多利亞公園' in text or 'Victoria Park' in text) and ('高士威道' in text or 'Causeway Road' in text): return 'boarding'
-    if route == '118' and ('紅磡海底隧道收費廣場' in text or 'Cross Harbour Tunnel Toll Plaza' in text): return 'boarding'
-    if route in ('8P','118') and ('漁灣邨' in text or 'Yue Wan Estate' in text): return 'destination'
-    return None
+def critical_scope(route, text, only=None):
+    matches=[]
+    def add(scope, match):
+        if match and (only is None or only == scope): matches.append(scope)
+    park=('維多利亞公園' in text or 'Victoria Park' in text) and ('高士威道' in text or 'Causeway Road' in text)
+    add('transfer',route=='106' and park)
+    add('boarding',route=='106' and ('紅磡街市' in text or 'Hung Hom Market' in text))
+    add('boarding',route=='8P' and park)
+    add('boarding',route=='118' and ('紅磡海底隧道收費廣場' in text or 'Cross Harbour Tunnel Toll Plaza' in text))
+    add('destination',route in ('8P','118') and ('漁灣邨' in text or 'Yue Wan Estate' in text))
+    add('alternate_alighting',route=='106' and ('銀幕街' in text or 'Ngan Mok Street' in text) and ('英皇道' in text or "King's Road" in text))
+    add('alternate_boarding',route=='8P' and bool(re.fullmatch(r'\s*(?:興發街\s*)?(?:Hing Fat Street)?\s*',text)) and bool(text.strip()))
+    return matches[0] if matches else None
+
+SCOPES=('boarding','transfer','destination','alternate_alighting','alternate_boarding')
+def notice_events(parser,text,record,now):
+    return [e for scope in SCOPES if (e:=parser(text,record,now,scope))]
 
 def stop_name(route, scope):
     if scope=='transfer' or (route=='8P' and scope=='boarding'):return '維多利亞公園，高士威道'
+    if scope=='alternate_alighting':return '銀幕街，英皇道'
+    if scope=='alternate_boarding':return '興發街'
     if scope=='destination':return '漁灣邨'
     if scope=='boarding':return '紅磡街市' if route=='106' else '紅磡海底隧道收費廣場'
     return ''
 
-def kmb_notice_event(text, record, now):
+def kmb_notice_event(text, record, now, only=None):
     """Recognize one dated suspension table, never infer semantics from a title.
 
     Multi-table, image-only, open-ended and unsupported formats remain unparsed.
@@ -106,7 +116,7 @@ def kmb_notice_event(text, record, now):
     if len(periods)!=1 or len(sections)!=1:return None
     direction,stops,replacement=sections[0]
     if direction.strip().lower() not in ('eastern district','siu sai wan','siu sai wan (island resort)'):return None
-    scope=critical_scope(route,stops)
+    scope=critical_scope(route,stops,only)
     if scope is None:return None
     parts=periods[0];months={name:i+1 for i,name in enumerate(('jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'))}
     def epoch(p):return int(dt.datetime(int(p[2]),months[p[1][:3].lower()],int(p[0]),int(p[3]),int(p[4]),tzinfo=HKT).timestamp())
@@ -218,7 +228,7 @@ def citybus_notice_period(text):
     except (ValueError,KeyError):return None
     return (start,end) if 0<end-start<=366*86400 else None
 
-def citybus_notice_event(text,record,now):
+def citybus_notice_event(text,record,now,only=None):
     """Supported bilingual single-table omission/suspension/relocation formats.
 
     Match the operative row, never a title, route substring, map or another
@@ -286,7 +296,7 @@ def citybus_notice_event(text,record,now):
     if stop not in aliases:return None
     en=re.sub(r'\s+','',english[0]).casefold()
     if en not in {re.sub(r'\s+','',a).casefold() for a in aliases[stop]}:return None
-    scope=critical_scope(route,stop)
+    scope=critical_scope(route,stop,only)
     if scope is None:return None
     start,end=period
     return {'id':'ctb-pdf-'+hashlib.sha256((record['source_url']+route+scope).encode()).hexdigest()[:16],
@@ -317,10 +327,12 @@ def citybus_context(now,request):
                     if len(cache)>=12:raise ValueError('Citybus PDF fetch limit')
                     cache[url]=None  # failed/unsupported URLs also consume the bound
                     raw=request(url);cache[url]=(citybus_pdf_text(raw),hashlib.sha256(raw).hexdigest())
-                if cache[url] is not None:event=citybus_notice_event(cache[url][0],record,now)
-                if event:
-                    event['source_sha256']=cache[url][1];events.append(event)
-                    reason='recognized_active' if event['start']<=now<event['end'] else 'recognized_inactive'
+                if cache[url] is not None:
+                    batch=notice_events(citybus_notice_event,cache[url][0],record,now)
+                    event=batch[0] if batch else None
+                    for item in batch:
+                        item['source_sha256']=cache[url][1];events.append(item)
+                if event:reason='recognized_active' if event['start']<=now<event['end'] else 'recognized_inactive'
             except (OSError,ValueError,KeyError,TypeError,ImportError):reason='fetch_or_parse_unavailable'
             if event is None:unparsed+=1
             if len(details)<18:details.append({'route':route,'notice_id':record['notice_id'],'status':reason})
@@ -329,6 +341,16 @@ def citybus_context(now,request):
         'limitation':'Official structured listing plus dynamically discovered Customer Notice PDFs. Strict bilingual dated single-table omission/relocation only; maps, image route badges, recurrence and other formats remain unparsed. Citybus only.'},details
 
 def citybus_events(html, now):
+    combined=[];unknown=None
+    for scope in SCOPES:
+        batch,count=_citybus_events(html,now,scope)
+        combined.extend(batch)
+        unknown=count if unknown is None else min(unknown,count)
+    # The generic pass counts genuinely unsupported rows once.
+    _,unknown=_citybus_events(html,now,None)
+    return list({e['id']:e for e in combined}.values()),unknown
+
+def _citybus_events(html, now, only):
     parser=Tables(); parser.feed(html)
     if 'Suspended Bus Stop' not in html or 'Last Update' not in html: raise ValueError('Citybus schema changed')
     events=[]; unresolved=0
@@ -339,20 +361,20 @@ def citybus_events(html, now):
         if route not in ROUTES: continue
         # Direction absent/ambiguous must not become a physically scoped block.
         toward=bool(re.search(r'小西灣|Siu Sai Wan',direction,re.I))
-        scope=critical_scope(route,suspended)
+        scope=critical_scope(route,suspended,only)
         validity=interval(arrangement)
         severity='hard_block'; effect='stop_omitted'
         if replacement.strip(): severity='degraded';effect='stop_relocated'
         if not scope:
-            scope=critical_scope(route,arrangement)
+            scope=critical_scope(route,arrangement,only)
             if scope and re.search(r'遷移|後移|前移|relocat',arrangement,re.I): severity='degraded';effect='stop_relocated'
             else: scope=None
         if not scope and re.search(r'全線暫停服務|service suspended on the entire route',arrangement,re.I):
             scope='route';effect='service_suspended'
         if not (toward and scope and validity): unresolved+=1;continue
-        label={'boarding':'上車站','transfer':'維園轉車站','destination':'漁灣邨站','route':'服務'}[scope]
+        label={'boarding':'上車站','transfer':'維園轉車站','destination':'漁灣邨站','route':'服務','alternate_alighting':'銀幕街站','alternate_boarding':'興發街站'}[scope]
         message=f'城巴{route}{label}'+('暫停' if severity=='hard_block' else '遷移，步程未核實')
-        events.append({'id':'ctb-'+hashlib.sha256('|'.join(row).encode()).hexdigest()[:16],
+        events.append({'id':'ctb-'+hashlib.sha256(('|'.join(row)+scope).encode()).hexdigest()[:16],
             'source':'citybus','source_url':CITYBUS,'fetched_at':now,'route':route,
             'direction':'toward_yue_wan','operator_mask':1,'scope':scope,'stop_name_tc':stop_name(route,scope),'effect':effect,
             'start':validity[0],'end':validity[1],'severity':severity,'verified':True,'message_tc':message})
@@ -434,6 +456,36 @@ def discover_kmb(route, request=fetch):
     if not bounds['data'] or not any('BOUND' in row for row in bounds['data']): raise ValueError('KMB bound identifiers unavailable')
     return records
 
+def alternate_route_mask(now, request):
+    """Positive current official route membership, separate from notice coverage.
+
+    I/O codes stay provider-local; require exact sequence, stop and terminus.
+    Partial notice coverage is still explicit, never a claim of no disruption.
+    """
+    def verify(url, route, direction, required, terminal, kmb=False):
+        data=json.loads(request(url))
+        generated=int(dt.datetime.fromisoformat(data['generated_timestamp']).timestamp())
+        if not now-86400<=generated<=now+300: return False
+        rows=data['data']
+        if not isinstance(rows,list) or not 1<=len(rows)<=80:return False
+        if any(r.get('route')!=route or r.get('bound' if kmb else 'dir')!=direction or
+               (kmb and str(r.get('service_type'))!='1') for r in rows):return False
+        pairs=[(int(r['seq']),r['stop']) for r in rows]
+        if len({seq for seq,_ in pairs})!=len(pairs):return False
+        return all(pairs.count(pair)==1 for pair in required) and max(pairs)[1]==terminal
+    city='https://rt.data.gov.hk/v2/transport/citybus/route-stop/CTB/'
+    try:
+        eight=verify(city+'8P/inbound','8P','I',[(5,'001213'),(6,'001251'),(9,'001224')],'001382')
+        if not eight:return 0
+        mask=1 if verify(city+'106/inbound','106','I',[(14,'001533'),(18,'001213'),(19,'001259')],'001382') else 0
+    except (OSError,ValueError,KeyError,TypeError):return 0
+    try:
+        if verify('https://data.etabus.gov.hk/v1/transport/kmb/route-stop/106/outbound/1',
+                  '106','O',[(14,'997CCAB996935BD7'),(18,'EAFC59DD23C39D5C'),(19,'834CC2324AAFB567')],
+                  'EB077E683E6C8DDA',True):mask|=2
+    except (OSError,ValueError,KeyError,TypeError):pass
+    return mask
+
 def build(now, request=fetch):
     events=[];sources=[]; diagnostics={}
     for source in ('citybus','kmb','lcsd'):
@@ -453,10 +505,11 @@ def build(now, request=fetch):
                         if not url.endswith('.pdf'):unparsed+=1;continue
                         if url not in cache:
                             raw=request(url);cache[url]=(kmb_pdf_text(raw),hashlib.sha256(raw).hexdigest())
-                        event=kmb_notice_event(cache[url][0],record,now)
-                        if event and event['id'] not in parsed:
-                            event['source_sha256']=cache[url][1];events.append(event);parsed.add(event['id'])
-                        elif event is None:unparsed+=1
+                        batch=notice_events(kmb_notice_event,cache[url][0],record,now)
+                        if not batch:unparsed+=1
+                        for event in batch:
+                            if event['id'] not in parsed:
+                                event['source_sha256']=cache[url][1];events.append(event);parsed.add(event['id'])
                     except (OSError,ValueError,KeyError,ImportError):unparsed+=1
                 status.update(coverage='partial',unparsed=unparsed+max(0,len(notices)-12),
                     limitation='Official discovery plus one explicit dated suspension-table PDF format; other PDF/HTML formats and timetable semantics remain unparsed. Operator-specific only.')
@@ -480,6 +533,12 @@ def build(now, request=fetch):
     events.sort(key=lambda e:(e['effect']=='athletic_meet',e['start'],e['id']))
     feed={'schema':1,'generated_at':now,'sources':sources,'events':events[:MAX_EVENTS],
           'truncated_events':dropped,'diagnostics':diagnostics}
+    checked=alternate_route_mask(now,request)
+    for source,mask in zip(sources[:2],(1,2)):
+        if source['fetched_at']!=now or source['coverage']=='unavailable':checked&=~mask
+    # A2 requires current positive route-stop membership and fresh notice feeds.
+    # Unknown notice formats retain the existing explicit partial-coverage limit.
+    feed['alternate_checked_mask']=checked if sources[0]['fetched_at']==now and not dropped else 0
     encoded=json.dumps(feed,ensure_ascii=False,separators=(',',':')).encode()
     if len(encoded)>24576: raise ValueError('Normalized feed size limit')
     return feed

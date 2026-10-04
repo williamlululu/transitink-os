@@ -800,33 +800,43 @@ String arrivalRiskText(const transitink::CommuteDashboardSnapshot& snapshot,
     return String();
 }
 
+bool showAlternate(const transitink::CommuteDashboardSnapshot& s) {
+    return s.recommendation==transitink::CommuteChoice::RouteA2 ||
+        ((!s.routeA.primary.valid || s.routeA.primary.contextDegraded) && s.routeA2.primary.valid);
+}
+const transitink::CommuteRouteEstimate& visibleRouteA(const transitink::CommuteDashboardSnapshot& s) {
+    return showAlternate(s) ? s.routeA2 : s.routeA;
+}
 String routeAStateText(
     const transitink::CommuteDashboardSnapshot& snapshot) {
+    if (showAlternate(snapshot) && snapshot.targetEpoch > 0 && snapshot.routeA2.riskAssessment==transitink::CommuteAssessment::Late) return "臨時轉車／或遲到";
+    if (showAlternate(snapshot)) return visibleRouteA(snapshot).primary.valid ?
+        (visibleRouteA(snapshot).primary.connectionAtRisk ? "臨時轉車／較趕" : "臨時轉車") : "臨時接駁待確認";
     if (snapshot.routeAContext.severity == transitink::ContextSeverity::HardBlock &&
-        !snapshot.routeA.primary.valid) return "正常轉車受阻";
-    if (snapshot.routeA.primary.contextDegraded) return "改道／步程待核實";
+        !visibleRouteA(snapshot).primary.valid) return "正常轉車受阻";
+    if (visibleRouteA(snapshot).primary.contextDegraded) return "改道／步程待核實";
 
     String result;
     // Keep the nominal assessment separate; show a known slower-scenario miss
     // even when the chosen recommendation is the other route.
-    if (snapshot.targetEpoch > 0 && snapshot.routeA.primary.valid) {
-        if (snapshot.routeA.riskAssessment == transitink::CommuteAssessment::Late)
-            return snapshot.routeA.primary.connectionAtRisk ? "轉車／慢車或遲到" : "慢車或遲到";
-        if (snapshot.routeA.riskAssessment == transitink::CommuteAssessment::Tight &&
-            snapshot.routeA.assessment == transitink::CommuteAssessment::Safe)
+    if (snapshot.targetEpoch > 0 && visibleRouteA(snapshot).primary.valid) {
+        if (visibleRouteA(snapshot).riskAssessment == transitink::CommuteAssessment::Late)
+            return visibleRouteA(snapshot).primary.connectionAtRisk ? "轉車／慢車或遲到" : "慢車或遲到";
+        if (visibleRouteA(snapshot).riskAssessment == transitink::CommuteAssessment::Tight &&
+            visibleRouteA(snapshot).assessment == transitink::CommuteAssessment::Safe)
             return "慢車餘裕不足";
     }
     switch (snapshot.routeAStatus.state) {
         case transitink::CommuteRouteAState::ConfirmedPair:
-            if (snapshot.routeA.primary.firstLegScheduled ||
-                snapshot.routeA.primary.connectionScheduled) return "含表定班次";
-            if (snapshot.routeA.primary.connectionAtRisk) return "轉車有風險";
-            if (snapshot.targetEpoch > 0 && saferConnectionSelected(snapshot.routeA))
+            if (visibleRouteA(snapshot).primary.firstLegScheduled ||
+                visibleRouteA(snapshot).primary.connectionScheduled) return "含表定班次";
+            if (visibleRouteA(snapshot).primary.connectionAtRisk) return "轉車有風險";
+            if (snapshot.targetEpoch > 0 && saferConnectionSelected(visibleRouteA(snapshot)))
                 return "較穩妥轉車";
             return snapshot.targetEpoch <= 0
                        ? String("可轉車")
-                       : assessmentText(snapshot.routeA.assessment,
-                                        snapshot.routeA.stale);
+                       : assessmentText(visibleRouteA(snapshot).assessment,
+                                        visibleRouteA(snapshot).stale);
         case transitink::CommuteRouteAState::ProvisionalTransfer:
             result = "預計轉車";
             break;
@@ -843,7 +853,7 @@ String routeAStateText(
             result = "資料暫缺";
             break;
     }
-    if (snapshot.routeA.stale) result += "*";
+    if (visibleRouteA(snapshot).stale) result += "*";
     return result;
 }
 
@@ -884,6 +894,8 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
     if (snapshot.recommendation == transitink::CommuteChoice::RouteA) {
         route = &snapshot.routeA;
         buses = "106→8P";
+    } else if (snapshot.recommendation == transitink::CommuteChoice::RouteA2) {
+        route=&snapshot.routeA2; buses="106→8P 臨時";
     } else if (snapshot.recommendation ==
                transitink::CommuteChoice::RouteB) {
         route = &snapshot.routeB;
@@ -899,16 +911,16 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
         }
         if (snapshot.routeAStatus.state ==
                 transitink::CommuteRouteAState::TransferPending &&
-            snapshot.routeA.primary.firstLegValid) {
+            visibleRouteA(snapshot).primary.firstLegValid) {
             drawTextColor(12, kCommuteHeroRegion.y + 31,
                           "轉車班次待確認", kColorWhite, 2);
             drawTruncatedTextColor(
                 12, kCommuteHeroRegion.y + 53,
                 String("106 ") +
-                    clockForEpoch(snapshot.routeA.primary.firstBusEpoch) +
+                    clockForEpoch(visibleRouteA(snapshot).primary.firstBusEpoch) +
                     "／" +
                     clockForEpoch(
-                        snapshot.routeA.primary.transferArrivalEpoch) +
+                        visibleRouteA(snapshot).primary.transferArrivalEpoch) +
                     "到維園",
                 376, kColorWhite);
             return;
@@ -959,8 +971,8 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
 
 String connectionLabel(const transitink::CommuteDashboardSnapshot& snapshot,
                        std::size_t row) {
-    const auto& eta = snapshot.etas[1];
-    const auto& trip = snapshot.routeA.primary;
+    const auto& eta = snapshot.etas[showAlternate(snapshot)?3:1];
+    const auto& trip = visibleRouteA(snapshot).primary;
     if (eta.contextImpacts[row].severity == transitink::ContextSeverity::HardBlock)
         return "停站受影響";
     if (eta.rowStale[row] || eta.stale) return "舊資料，待更新";
@@ -977,10 +989,10 @@ String connectionLabel(const transitink::CommuteDashboardSnapshot& snapshot,
 
 void drawCommuteRouteA(const DisplayRegion& region,
     const transitink::CommuteDashboardSnapshot& snapshot) {
-    const auto& trip = snapshot.routeA.primary;
+    const auto& trip = visibleRouteA(snapshot).primary;
     const int64_t now = static_cast<int64_t>(time(nullptr));
     canvas.drawFastHLine(region.x, region.y + region.h - 1, region.w, kColorBlack);
-    drawTruncatedText(10, region.y + 16, "A 106→8P 紅磡→維園", 206);
+    drawTruncatedText(10, region.y + 16, showAlternate(snapshot)?"106銀幕街落 → 8P":"A 106→8P 紅磡→維園", 206);
     drawRightAlignedTruncatedText(390, region.y + 16, routeAStateText(snapshot), 174);
     String first = "106 "; unsigned shown = 0;
     const auto& bus106 = snapshot.etas[0];
@@ -991,11 +1003,23 @@ void drawCommuteRouteA(const DisplayRegion& region,
     }
     if (!shown) first += trip.firstLegValid ? clockForEpoch(trip.firstBusEpoch) : String("資料暫缺");
     if (trip.firstLegValid) first += " 選" + clockForEpoch(trip.firstBusEpoch) +
-        "→" + clockForEpoch(trip.transferReadyEpoch) + "可轉";
+        (showAlternate(snapshot)?" 落":"→") + clockForEpoch(showAlternate(snapshot)?trip.transferArrivalEpoch:trip.transferReadyEpoch) + (showAlternate(snapshot)?"":"可轉");
     drawTruncatedText(10, region.y + 34, first, 380);
-    const auto& bus8p = snapshot.etas[1]; shown = 0;
+    const auto& bus8p = snapshot.etas[showAlternate(snapshot)?3:1]; shown = 0;
+    std::array<std::size_t,3> alternateRows{{bus8p.count,bus8p.count,bus8p.count}};
+    if (showAlternate(snapshot)) {
+        for (std::size_t i=0;i<bus8p.count;++i) {
+            if (bus8p.epochs[i]<=now) continue;
+            if (bus8p.epochs[i]<trip.connectionEpoch) alternateRows[0]=i;
+            if (bus8p.epochs[i]==trip.connectionEpoch) alternateRows[1]=i;
+            if (bus8p.epochs[i]>trip.connectionEpoch && alternateRows[2]==bus8p.count &&
+                bus8p.epochs[i]>=trip.riskTransferReadyEpoch+snapshot.connectionEarlyAllowanceMinutes*60)
+                alternateRows[2]=i;
+        }
+    }
     for (std::size_t i=0; i<bus8p.count && shown<3; ++i) {
         if (bus8p.epochs[i] <= now) continue;
+        if (showAlternate(snapshot) && std::find(alternateRows.begin(),alternateRows.end(),i)==alternateRows.end()) continue;
         const String line = String(bus8p.scheduled[i] ? "8P表定 " : "8P ") +
             clockForEpoch(bus8p.epochs[i]) + "　" + connectionLabel(snapshot,i);
         drawTruncatedText(10, region.y + 52 + shown*18, line, 380); ++shown;
@@ -1008,6 +1032,7 @@ void drawCommuteRouteA(const DisplayRegion& region,
         "／約" + clockForEpoch(trip.arrivalEpoch) + "到達" : String("接駁及到達待確認");
     if (trip.provisional) detail += "／班距暫估";
     else if (trip.valid) detail += "／暫行估算";
+    if (showAlternate(snapshot)) detail="步行約4分→興發街 " + clockForEpoch(trip.transferReadyEpoch) + "轉／" + clockForEpoch(trip.arrivalEpoch) + "到";
     drawTruncatedText(10,region.y+106,detail,380);
     String warning;
     if (snapshot.routeAContext.severity != transitink::ContextSeverity::None) {
@@ -1045,7 +1070,7 @@ String sourceAgeText(const transitink::CommuteEtaSnapshot& eta) {
 }
 
 void drawCommuteFooter(const transitink::CommuteDashboardSnapshot& snapshot) {
-    const auto* selected = snapshot.recommendation == transitink::CommuteChoice::RouteA ? &snapshot.routeA :
+    const auto* selected = snapshot.recommendation == transitink::CommuteChoice::RouteA2 ? &snapshot.routeA2 : snapshot.recommendation == transitink::CommuteChoice::RouteA ? &snapshot.routeA :
         snapshot.recommendation == transitink::CommuteChoice::RouteB ? &snapshot.routeB : nullptr;
     String line = selected ? arrivalRiskText(snapshot,*selected) : String();
     if (selected && snapshot.targetEpoch > 0 && selected->assessment == transitink::CommuteAssessment::Late)
@@ -1054,11 +1079,14 @@ void drawCommuteFooter(const transitink::CommuteDashboardSnapshot& snapshot) {
     if (line.isEmpty() && selected && selected->primary.contextDegraded) line="停站有改動，正常步程待核實";
     if (line.isEmpty()) {
         bool partial=false, stale=false;
-        for (const auto& eta:snapshot.etas) {partial=partial||eta.partial;stale=stale||eta.stale;}
+        for (std::size_t i=0;i<snapshot.etas.size();++i) {
+            if (i==3 && !showAlternate(snapshot)) continue;
+            const auto& eta=snapshot.etas[i];partial=partial||eta.partial;stale=stale||eta.stale;
+        }
         line=stale?String("部分資料過時，留意實際班次"):partial?String("部分營辦商資料暫缺"):
             !snapshot.dateHint.empty()?String(snapshot.dateHint.c_str()):sourceAgeText(snapshot.etas[0]);
         if (!partial && !stale && snapshot.dateHint.empty() && selected && selected->fallback.valid)
-            line += "／錯過首班約" + clockForEpoch(selected->fallback.arrivalEpoch) + "到";
+            line += String(selected->primary.alternateTransfer?"／後備接駁約":"／錯過首班約") + clockForEpoch(selected->fallback.arrivalEpoch) + "到";
     }
     drawTruncatedText(10,kCommuteFooterRegion.y+15,line,380);
     drawTruncatedText(10,kCommuteFooterRegion.y+32,"主頁查車　上鍵設定　下鍵天氣",380);

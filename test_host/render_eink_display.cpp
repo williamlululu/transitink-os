@@ -329,5 +329,34 @@ int main(int argc, char** argv) {
     assert(commuteRainText(forecast,weather).indexOf("全日顯著雨機會")>=0);
     assert(commuteRainText(forecast,weather).indexOf("PSR")<0);
     save("28_weather_human_rain_probability.pbm",true);
-    std::cout << "28 production renderer previews; planner integration, semantic and partial/full parity checks passed\n";
+    const auto alternate = [&]() {
+        normal();snapshot.context.alternateCheckedMask=3;
+        snapshot.context.events[0]=notice();snapshot.context.count=1;
+        seedPlanner(transitink::CommuteEtaKind::Bus8PHingFat,{26,31,37});
+    };
+    normal();runPlanner(epoch(65));assert(!snapshot.routeA2.primary.valid);save("29_normal_preserved_132.pbm");
+    alternate();runPlanner(epoch(65));assert(snapshot.recommendation==transitink::CommuteChoice::RouteA2);
+    assert(snapshot.routeA2.primary.transferReadyEpoch==epoch(26));save("30_alternate_active.pbm");
+    assert(connectionLabel(snapshot,0)=="可接但較趕");assert(connectionLabel(snapshot,1)=="選乘這班");
+    assert(connectionLabel(snapshot,2)=="後備接駁");save("31_alternate_tight_selected_safer.pbm");
+    snapshot.context.events[1]=meetEvent();snapshot.context.count=2;runPlanner(epoch(65));
+    assert(snapshot.crowding8p&&snapshot.routeA2.primary.valid);save("32_alternate_meet.pbm");
+    alternate();snapshot.context.events[1]=notice();snapshot.context.events[1].scope=transitink::ContextScope::AlternateAlighting;
+    snapshot.context.count=2;runPlanner(epoch(65));assert(!snapshot.routeA2.primary.valid);save("33_alternate_ngan_mok_blocked.pbm");
+    alternate();snapshot.context.events[1]=notice();snapshot.context.events[1].scope=transitink::ContextScope::AlternateBoarding;
+    snapshot.context.events[1].route=1;snapshot.context.events[1].severity=transitink::ContextSeverity::Degraded;
+    snapshot.context.count=2;runPlanner(epoch(65));assert(!snapshot.routeA2.primary.valid);save("34_alternate_hing_fat_changed.pbm");
+    alternate();snapshot.etas[0].operators[1]=0;runPlanner(epoch(65));
+    assert(snapshot.routeA.primary.valid&&snapshot.routeA.primary.firstOperator==0);
+    assert(snapshot.routeA2.primary.firstOperator==2);save("35_alternate_one_operator.pbm");
+    alternate();runPlanner(epoch(65));assert(snapshot.routeA2.primary.arrivalEpoch<snapshot.routeB.primary.arrivalEpoch);save("36_alternate_faster.pbm");
+    alternate();seedPlanner(transitink::CommuteEtaKind::Bus8PHingFat,{66,72,78});runPlanner(epoch(65));
+    assert(snapshot.recommendation==transitink::CommuteChoice::RouteB);save("37_route_b_safer_than_alternate.pbm");
+    alternate();runPlanner(0);assert(snapshot.routeA2.primary.connectionAtRisk);
+    assert(routeAStateText(snapshot).indexOf("遲到")<0);save("38_leave_now_alternate.pbm");
+    alternate();snapshot.context.generatedEpoch=fixtureNow-172800;runPlanner(epoch(65));
+    assert(!snapshot.routeA2.primary.valid);save("39_alternate_stale_context.pbm");
+    normal();runPlanner(epoch(65));save("40_weather_regression_132.pbm",true);
+
+    std::cout << "40 production renderer previews; planner integration, semantic and partial/full parity checks passed\n";
 }

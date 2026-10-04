@@ -563,6 +563,102 @@ CommuteRouteEstimate planRouteA(const CommuteEtaSnapshot& bus106,
     return result;
 }
 
+// A2 has its own engineering profile. Do not pass these values through normal
+// route settings or apply normal Victoria Park timetable extrapolation here.
+CommuteRouteEstimate planRouteA2(const CommuteDashboardSnapshot& dashboard,
+        int64_t now, int64_t target, const CommutePlannerSettings& settings,
+        bool recovery, bool weekday, uint16_t localMinute, std::string& reason) {
+    CommuteRouteEstimate result;
+    const auto& context=dashboard.context;
+    reason="normal_transfer_available";
+    if (!contextFresh(context.generatedEpoch,now) || context.lastFetchFailed ||
+        context.alternateCheckedMask == 0) {
+        reason="alternate_context_unverified";return result;
+    }
+    const auto& first=dashboard.etas[0];const auto& connections=dashboard.etas[3];
+    // No product-wide recalibration: 12/14 first ride, four-minute walk, 12/14
+    // second ride; early-arrival allowance remains the existing risk setting.
+    for (std::size_t i=0;i<std::min(first.count,first.epochs.size());++i) {
+        const auto mask=contextOperatorMask(first.operators[i]);
+        const auto& source=context.sources[mask==2?1:0];
+        if (!mask || !(context.alternateCheckedMask & mask) ||
+            !source.coverage || !contextFresh(source.fetchedEpoch,now) ||
+            !context.sources[0].coverage || !contextFresh(context.sources[0].fetchedEpoch,now)) continue;
+        const auto bus=first.epochs[i];
+        if (bus<now+(settings.routeAWalkMinutes+settings.boardingBufferMinutes)*60 ||
+            !etaRowCurrent(first,i,now,settings) || first.rowStale[i] || first.stale) continue;
+        bool activated=false;
+        const auto normalArrival=firstLegEstimate(bus,now,weekday,localMinute,settings).transferArrivalEpoch;
+        for (std::size_t n=0;n<std::min(context.count,context.events.size());++n) {
+            const auto& e=context.events[n];
+            const bool normalStop=(e.route==0 && e.scope==ContextScope::Transfer && (e.operatorMask&mask)) ||
+                (e.route==1 && e.scope==ContextScope::Boarding && (e.operatorMask&1));
+            // Must be active now, finite and recently verified, not merely a
+            // future notice, stale cached block, crowding, or advisory.
+            if (normalStop && e.verified && e.towardYueWan && !e.athleticMeet &&
+                e.severity>=ContextSeverity::Degraded && e.startEpoch<=now && now<e.endEpoch &&
+                normalArrival>=e.startEpoch && normalArrival<e.endEpoch &&
+                contextFresh(e.fetchedEpoch,now)) activated=true;
+        }
+        if (!activated) continue;
+        reason="alternate_live_eta_pending";
+        const auto firstImpact=commuteContextImpact(context,0,mask,bus,bus+14*60,now,true);
+        if (firstImpact.severity>=ContextSeverity::Degraded || alternateSegmentChanged(context,0,mask,bus,bus+12*60,bus+14*60)) {
+            reason="ngan_mok_or_required_segment_changed";continue;
+        }
+        CommuteTripEstimate leg;
+        leg.alternateTransfer=true;leg.firstLegValid=true;leg.firstOperator=first.operators[i];
+        leg.firstLegScheduled=first.scheduled[i];leg.firstLegRideMinutes=12;
+        leg.firstBusEpoch=bus;leg.leaveHomeEpoch=bus-(settings.routeAWalkMinutes+settings.boardingBufferMinutes)*60;
+        leg.transferArrivalEpoch=bus+12*60;leg.transferReadyEpoch=bus+16*60;
+        leg.riskTransferReadyEpoch=bus+18*60;
+        if (!result.primary.firstLegValid) result.primary=leg;
+        for (std::size_t j=0;j<std::min(connections.count,connections.epochs.size());++j) {
+            const auto next=connections.epochs[j];
+            if (connections.operators[j]!=2 || !etaRowCurrent(connections,j,now,settings) ||
+                connections.rowStale[j] || connections.stale) continue;
+            const auto impact=commuteContextImpact(context,1,1,next,next+14*60,now,true);
+            if (impact.severity>=ContextSeverity::Degraded || alternateSegmentChanged(context,1,1,next,next+12*60,next+14*60)) {
+                reason="hing_fat_or_required_segment_changed";continue;
+            }
+            if (next<leg.transferReadyEpoch) continue;
+            auto candidate=leg;
+            candidate.valid=candidate.connectionConfirmed=true;
+            candidate.connectionOperator=2;candidate.connectionScheduled=connections.scheduled[j];
+            candidate.connectionRideMinutes=12;candidate.connectionEpoch=next;
+            candidate.arrivalEpoch=next+12*60;candidate.riskArrivalEpoch=next+14*60;
+            candidate.connectionAtRisk=next-settings.connectionEarlyAllowanceMinutes*60<leg.riskTransferReadyEpoch;
+            candidate.transferMarginMinutes=static_cast<int16_t>((next-leg.transferArrivalEpoch)/60);
+            if (!result.nominalFastest.valid || candidate.arrivalEpoch<result.nominalFastest.arrivalEpoch)
+                result.nominalFastest=candidate;
+            if (betterTripForTarget(candidate,result.primary,target)) result.primary=candidate;
+        }
+    }
+    // Retain a later safer connection for the selected first leg, independently
+    // of the nominal-fastest/target-based primary selection.
+    if (result.primary.valid) {
+        reason="active_official_normal_stop_disruption";
+        const auto& trip=result.primary;
+        for (std::size_t j=0;j<std::min(connections.count,connections.epochs.size());++j) {
+            const auto next=connections.epochs[j];
+            if (next<=trip.connectionEpoch || next-settings.connectionEarlyAllowanceMinutes*60<trip.riskTransferReadyEpoch ||
+                connections.operators[j]!=2 || connections.rowStale[j] || connections.stale ||
+                !etaRowCurrent(connections,j,now,settings) ||
+                commuteContextImpact(context,1,1,next,next+14*60,now,true).severity>=ContextSeverity::Degraded ||
+                alternateSegmentChanged(context,1,1,next,next+12*60,next+14*60)) continue;
+            if (!result.fallback.valid || next<result.fallback.connectionEpoch) {
+                result.fallback=trip;result.fallback.connectionEpoch=next;
+                result.fallback.connectionScheduled=connections.scheduled[j];
+                result.fallback.arrivalEpoch=next+12*60;result.fallback.riskArrivalEpoch=next+14*60;
+                result.fallback.connectionAtRisk=false;
+                result.fallback.transferMarginMinutes=static_cast<int16_t>((next-trip.transferArrivalEpoch)/60);
+            }
+        }
+    }
+    result.assessment=assess(result.primary,target,settings,recovery);
+    return result;
+}
+
 CommuteRouteEstimate planRouteB(const CommuteEtaSnapshot& bus118,
                                 int64_t nowEpoch,
                                 int64_t targetEpoch,
@@ -648,7 +744,8 @@ CommuteDataQuality dataQuality(const CommuteDashboardSnapshot& dashboard,
     bool allUsable = true;
     bool anyPartial = false;
     bool anyStale = false;
-    for (const auto& eta : dashboard.etas) {
+    for (std::size_t stream=0;stream<3;++stream) {
+        const auto& eta=dashboard.etas[stream];
         const bool usable = etaStreamUsable(eta, nowEpoch, settings);
         anyUsable = anyUsable || usable;
         allUsable = allUsable && usable;
@@ -746,6 +843,11 @@ void planCommuteDashboard(CommuteDashboardSnapshot& dashboard,
     for (std::size_t stream = 0; stream < dashboard.etas.size(); ++stream) {
         auto& eta = dashboard.etas[stream];
         eta.contextImpacts = {};
+        if (stream == 3) {
+            for (std::size_t row=0;row<std::min(eta.count,eta.epochs.size());++row)
+                eta.contextImpacts[row]=commuteContextImpact(dashboard.context,1,1,eta.epochs[row],eta.epochs[row]+14*60,nowEpoch,true);
+            continue;
+        }
         auto& routeImpact = stream == 2 ? dashboard.routeBContext : dashboard.routeAContext;
         for (std::size_t row = 0; row < std::min(eta.count, eta.epochs.size()); ++row) {
             const int64_t bus = eta.epochs[row];
@@ -771,7 +873,8 @@ void planCommuteDashboard(CommuteDashboardSnapshot& dashboard,
     dashboard.routeB = planRouteB(
         commuteEta(dashboard, CommuteEtaKind::Bus118), nowEpoch, targetEpoch,
         settings, recoveryMode);
-    for (auto* route : {&dashboard.routeA, &dashboard.routeB}) {
+    dashboard.routeA2=planRouteA2(dashboard,nowEpoch,targetEpoch,settings,recoveryMode,weekday,localMinuteOfDay,dashboard.alternateReason);
+    for (auto* route : {&dashboard.routeA, &dashboard.routeB, &dashboard.routeA2}) {
         auto slow = route->primary;
         slow.valid = slow.valid && slow.riskArrivalEpoch > 0;
         slow.arrivalEpoch = slow.riskArrivalEpoch;
@@ -796,6 +899,10 @@ void planCommuteDashboard(CommuteDashboardSnapshot& dashboard,
     if (betterRecommendation(dashboard.routeA, best)) {
         best = dashboard.routeA;
         dashboard.recommendation = CommuteChoice::RouteA;
+    }
+    if (betterRecommendation(dashboard.routeA2, best)) {
+        best=dashboard.routeA2;
+        dashboard.recommendation=CommuteChoice::RouteA2;
     }
     if (betterRecommendation(dashboard.routeB, best)) {
         dashboard.recommendation = CommuteChoice::RouteB;

@@ -10,6 +10,14 @@ int main(int argc, char** argv) {
     CommuteContextSnapshot result;
     CHECK(parseCommuteContext(body,1894018800,result));CHECK(result.count==1);
     CHECK(result.events[0].severity==ContextSeverity::HardBlock);
+    CHECK(result.alternateCheckedMask==0);
+    auto alternate=body;
+    alternate.insert(1,"\"alternate_checked_mask\":3,");
+    alternate.replace(alternate.find("\"scope\":\"transfer\""),18,"\"scope\":\"alternate_alighting\"");
+    CHECK(parseCommuteContext(alternate,1894018800,result));
+    CHECK(result.alternateCheckedMask==3&&result.events[0].scope==ContextScope::AlternateAlighting);
+    alternate.insert(1,"\"truncated_events\":1,");
+    CHECK(parseCommuteContext(alternate,1894018800,result)&&result.alternateCheckedMask==0);
     CHECK(!parseCommuteContext(body,1894010000,result));
     for (const auto& mutation: {std::pair<std::string,std::string>{"\"schema\":1","\"schema\":2"},
         {"mobile.citybus.com.hk/","mobile.citybus.com.hk.invalid/"},

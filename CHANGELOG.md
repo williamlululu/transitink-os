@@ -2,6 +2,18 @@
 
 All notable user-visible changes to TransitInk OS will be documented here.
 
+## 1.3.2 - candidate (not published)
+
+- Add an explicitly identified temporary 106 Ngan Mok Street → four-minute walk
+  → 8P Hing Fat Street option when a verified active official normal-transfer
+  disruption applies to that operator. Require fresh alternate-stop membership
+  and ETA evidence; preserve separate normal, fastest, selected and safer options.
+- Keep normal 12/17/35 estimates, settings, power/buttons, OTA partitions and
+  advisory-only Athletic Meet behavior. Extend bounded stop-specific official
+  context and diagnostics; unsupported notice formats remain explicit.
+- Renderer execution/visual review and Windows-blocked native regression must
+  complete in the private Linux validation workflow before candidate readiness.
+
 ## 1.3.0 - candidate (not published)
 
 - Preserve distinct KMB/Citybus ETA rows and their original timestamps; retain

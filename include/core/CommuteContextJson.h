@@ -17,6 +17,10 @@ inline bool parseCommuteContext(const std::string& body, int64_t now,
     if (next.generatedEpoch <= 0 || next.generatedEpoch > now + 300 ||
         doc["events"].size() > kContextEventLimit || doc["sources"].size() != 3) return false;
     next.receivedEpoch = now;
+    if (doc["alternate_checked_mask"].is<uint8_t>()) {
+        next.alternateCheckedMask = doc["alternate_checked_mask"].as<uint8_t>();
+        if (next.alternateCheckedMask > 3 || doc["truncated_events"].as<unsigned>() > 0) next.alternateCheckedMask = 0;
+    }
     uint8_t sourceSeen = 0;
     for (JsonObjectConst source : doc["sources"].as<JsonArrayConst>()) {
         const std::string name = source["source"] | "";
@@ -62,7 +66,9 @@ inline bool parseCommuteContext(const std::string& body, int64_t now,
         const std::string scope = row["scope"] | "";
         e.scope = scope == "route" ? ContextScope::Route : scope == "boarding" ? ContextScope::Boarding :
                   scope == "transfer" && e.route == 0 ? ContextScope::Transfer :
-                  scope == "destination" && e.route != 0 ? ContextScope::Destination : ContextScope::Unknown;
+                  scope == "destination" && e.route != 0 ? ContextScope::Destination :
+                  scope == "alternate_alighting" && e.route == 0 ? ContextScope::AlternateAlighting :
+                  scope == "alternate_boarding" && e.route == 1 ? ContextScope::AlternateBoarding : ContextScope::Unknown;
         const std::string severity = row["severity"] | "";
         e.severity = severity == "hard_block" ? ContextSeverity::HardBlock :
                      severity == "degraded" ? ContextSeverity::Degraded : ContextSeverity::Advisory;

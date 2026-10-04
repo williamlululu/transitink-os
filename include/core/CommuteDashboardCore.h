@@ -11,7 +11,7 @@
 
 namespace transitink {
 
-constexpr std::size_t kCommuteEtaStreamCount = 3;
+constexpr std::size_t kCommuteEtaStreamCount = 4;
 // Joint routes may provide several distinct buses from each operator. Keep a
 // bounded planning horizon independently of the three rows shown on screen.
 constexpr std::size_t kCommuteEtaCount = 12;
@@ -24,12 +24,14 @@ enum class CommuteEtaKind : uint8_t {
     Bus106,
     Bus8P,
     Bus118,
+    Bus8PHingFat,
 };
 
 enum class CommuteChoice : uint8_t {
     None,
     RouteA,
     RouteB,
+    RouteA2,
 };
 
 enum class CommuteAssessment : uint8_t {
@@ -110,6 +112,7 @@ struct CommuteEtaSnapshot {
 };
 
 struct CommuteTripEstimate {
+    bool alternateTransfer = false;
     bool valid = false;
     bool firstLegValid = false;
     bool connectionConfirmed = false;
@@ -230,6 +233,8 @@ struct CommuteDashboardSnapshot {
     CommuteRouteEstimate routeA;
     CommuteRouteAStatus routeAStatus;
     CommuteRouteEstimate routeB;
+    CommuteRouteEstimate routeA2;
+    std::string alternateReason;
     CommuteChoice recommendation = CommuteChoice::None;
     int64_t targetEpoch = 0;
     int64_t updatedAtEpoch = 0;

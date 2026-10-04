@@ -47,7 +47,8 @@ void setEtas(transitink::CommuteDashboardSnapshot& dashboard,
 int main() {
     using namespace transitink;
     const auto& configs = commuteBusFeedConfigs();
-    assert(configs.size() == 3);
+    assert(configs.size() == 4);
+    assert(configs[3].citybus.stopId == "001251" && configs[3].citybusBoardingSequence == 6);
     assert(configs[0].citybus.routeId == "106");
     assert(configs[0].citybus.stopId == "001533");
     assert(configs[0].citybusBoardingSequence == 14);
