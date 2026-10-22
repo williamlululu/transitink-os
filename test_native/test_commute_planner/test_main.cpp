@@ -97,7 +97,7 @@ void setFailed(transitink::CommuteDashboardSnapshot& dashboard,
 void test_official_route_scope_and_sequences() {
     using namespace transitink;
     const auto& configs = commuteBusFeedConfigs();
-    TEST_ASSERT_EQUAL_UINT32(3, configs.size());
+    TEST_ASSERT_EQUAL_UINT32(4, configs.size());
     TEST_ASSERT_EQUAL_STRING("106", configs[0].citybus.routeId.c_str());
     TEST_ASSERT_EQUAL_STRING("001533", configs[0].citybus.stopId.c_str());
     TEST_ASSERT_EQUAL_UINT16(14, configs[0].citybusBoardingSequence);
@@ -118,6 +118,15 @@ void test_official_route_scope_and_sequences() {
     TEST_ASSERT_EQUAL_UINT16(27, configs[2].citybusDestinationSequence);
     TEST_ASSERT_EQUAL_STRING("C564EDC91AFD7D04", configs[2].kmbStopId);
     TEST_ASSERT_EQUAL_STRING("1", configs[2].kmbServiceType);
+    TEST_ASSERT_EQUAL_STRING("8P", configs[3].citybus.routeId.c_str());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(BusOperator::Citybus),
+                          static_cast<int>(configs[3].citybus.operatorId));
+    TEST_ASSERT_EQUAL_STRING("001251", configs[3].citybus.stopId.c_str());
+    TEST_ASSERT_EQUAL_STRING("I", configs[3].citybus.directionId.c_str());
+    TEST_ASSERT_EQUAL_UINT16(6, configs[3].citybusBoardingSequence);
+    TEST_ASSERT_EQUAL_UINT16(9, configs[3].citybusDestinationSequence);
+    TEST_ASSERT_EQUAL_STRING("001224", configs[3].destinationStopId);
+    TEST_ASSERT_NULL(configs[3].kmbStopId);
 }
 
 void test_joint_operator_matching_and_deduplication() {
