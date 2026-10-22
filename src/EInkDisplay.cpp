@@ -258,6 +258,11 @@ int measureTextWidth(const String& text) {
 
 void drawTextColor(int x, int y, const String& text, uint16_t color,
                    uint8_t scale = 1) {
+#ifdef TRANSITINK_RENDER_TEXT_BOUNDS
+    TRANSITINK_RENDER_TEXT_BOUNDS(x, y - kCustomGlyphBaselineOffset * scale,
+                                 measureTextWidth(text) * scale,
+                                 kCustomGlyphHeight * scale, text.c_str());
+#endif
     int cursorX = x;
     const char* raw = text.c_str();
     size_t length = text.length();
@@ -292,6 +297,10 @@ void drawText(int x, int y, const String& text) {
 
 void drawAsciiText(int x, int y, const String& text, uint8_t size = 1,
                    uint16_t color = kColorBlack) {
+#ifdef TRANSITINK_RENDER_TEXT_BOUNDS
+    TRANSITINK_RENDER_TEXT_BOUNDS(x, y, text.length() * 6 * size,
+                                 8 * size, text.c_str());
+#endif
     canvas.setFont(nullptr);
     canvas.setTextWrap(false);
     canvas.setTextSize(size);
@@ -895,7 +904,7 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
         route = &snapshot.routeA;
         buses = "106→8P";
     } else if (snapshot.recommendation == transitink::CommuteChoice::RouteA2) {
-        route=&snapshot.routeA2; buses="106→8P 臨時";
+        route=&snapshot.routeA2; buses="106→8P";
     } else if (snapshot.recommendation ==
                transitink::CommuteChoice::RouteB) {
         route = &snapshot.routeB;
@@ -954,7 +963,9 @@ void drawCommuteHero(const transitink::CommuteDashboardSnapshot& snapshot) {
                           transitink::CommuteSessionMode::AutomaticRecovery;
     drawTextColor(10, kCommuteHeroRegion.y + 18,
                   route->primary.contextDegraded ? String("步程改動／待核實") : recovery && snapshot.targetEpoch > 0
-                      ? String("趕路／預計最快") : String("建議／預計"),
+                      ? String("趕路／預計最快")
+                      : snapshot.recommendation == transitink::CommuteChoice::RouteA2
+                          ? String("臨時轉車／預計") : String("建議／預計"),
                   kColorWhite);
     drawTextColor(10, kCommuteHeroRegion.y + 52, buses, kColorWhite, 2);
     drawTextColor(200, kCommuteHeroRegion.y + 16, "趕此班出門", kColorWhite);

@@ -6,6 +6,11 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+// Capture actual production text calls, using the selected glyph advances and
+// baseline/scale (ASCII uses the pinned GFX default font cell). Firmware builds
+// do not define this hook and incur no recording/storage overhead.
+static void recordTextBounds(int x, int y, int w, int h, const char* text);
+#define TRANSITINK_RENDER_TEXT_BOUNDS recordTextBounds
 static time_t fixtureNow;
 static time_t transitinkHostTime(time_t* result) {
     if (result) *result = fixtureNow;
@@ -14,6 +19,46 @@ static time_t transitinkHostTime(time_t* result) {
 #define time transitinkHostTime
 #include "../src/EInkDisplay.cpp"
 #undef time
+#undef TRANSITINK_RENDER_TEXT_BOUNDS
+
+struct TextBounds {
+    DisplayRegion box;
+    std::string text;
+};
+static bool captureTextBounds = false;
+static std::vector<TextBounds> recordedTextBounds;
+static void recordTextBounds(int x, int y, int w, int h, const char* text) {
+    if (captureTextBounds && w > 0)
+        recordedTextBounds.push_back({{x,y,w,h},text});
+}
+static bool intersects(const DisplayRegion& a, const DisplayRegion& b) {
+    return a.x < b.x+b.w && b.x < a.x+a.w &&
+           a.y < b.y+b.h && b.y < a.y+a.h;
+}
+static bool contained(const DisplayRegion& inner, const DisplayRegion& outer) {
+    return inner.x>=outer.x && inner.y>=outer.y &&
+           inner.x+inner.w<=outer.x+outer.w && inner.y+inner.h<=outer.y+outer.h;
+}
+static void assertHeaderBounds(bool forecastPage, bool alternate) {
+    const DisplayRegion header{0,0,400,forecastPage?36:96};
+    size_t count=0;
+    for (size_t i=0;i<recordedTextBounds.size();++i) {
+        const auto& a=recordedTextBounds[i];
+        if (a.box.y>=header.h) continue;
+        ++count;
+        assert(contained(a.box,header) && "header text clipped or outside its region");
+        if (!forecastPage && alternate && a.box.y>=36 && a.box.x<200)
+            assert(contained(a.box,{0,36,190,60}) && "A2 recommendation exceeds left column");
+        for (size_t j=i+1;j<recordedTextBounds.size();++j) {
+            const auto& b=recordedTextBounds[j];
+            if (b.box.y<header.h && intersects(a.box,b.box)) {
+                std::cerr << "Header text overlap: " << a.text << " / " << b.text << '\n';
+                assert(false && "production header text bounding boxes overlap");
+            }
+        }
+    }
+    assert(count>=5 && "production text-bounds hook did not record header calls");
+}
 
 void BatteryMonitor::begin() {}
 bus_eta::BatterySnapshot BatteryMonitor::read() {
@@ -95,14 +140,28 @@ int main(int argc, char** argv) {
         }
     }
     const auto save = [&](const char* name, bool forecastPage = false) {
+        recordedTextBounds.clear(); captureTextBounds=true;
         if (forecastPage) display.showForecastDashboard(forecast, weather);
         else display.showCommuteDashboard(snapshot, forecast, weather);
+        captureTextBounds=false;
+        assertHeaderBounds(forecastPage,snapshot.recommendation==transitink::CommuteChoice::RouteA2);
+        // Positive geometry plus a negative control for the exact rc.1/rc.2 bug.
+        assert(contained({10,60,measureTextWidth("106→8P")*2,32},{0,36,190,60}));
+        assert(intersects({10,60,measureTextWidth("106→8P 臨時")*2,32},
+                          {200,56,measureTextWidth("06:24"),16}));
+        std::ofstream bounds(std::filesystem::path(argv[1]) / (std::string(name)+".bounds.tsv"));
+        bounds << "x\ty\twidth\theight\ttext\n";
+        for (const auto& item:recordedTextBounds)
+            if (item.box.y<(forecastPage?36:96))
+                bounds << item.box.x << '\t' << item.box.y << '\t' << item.box.w
+                       << '\t' << item.box.h << '\t' << item.text << '\n';
+        assert(bounds.good());
         assert(sizeof(frameBuffer) == 15000);
         std::vector<uint8_t> full(frameBuffer, frameBuffer + sizeof(frameBuffer));
         if (forecastPage) display.refreshForecastHeader(forecast, weather);
         else { display.refreshCommuteHeader(snapshot, forecast, weather); display.refreshCommuteBody(snapshot, forecast, weather); }
         assert(std::equal(full.begin(), full.end(), frameBuffer));
-        if (!forecastPage) {
+        {
             // Compare each entire header text rectangle against its isolated
             // production rendering. This catches missing/clipped clock pixels
             // and intrusion by other text, including the rc.1 weather overlap.
@@ -114,12 +173,26 @@ int main(int argc, char** argv) {
                         assert((full[index]&mask)==(frameBuffer[index]&mask));
                     }
             };
-            canvas.fillScreen(kColorBlack);
-            drawAsciiText(316,1,currentTimeText(),2,kColorWhite);
-            assertIsolated({316,1,60,16});
-            canvas.fillScreen(kColorBlack);
-            drawTruncatedTextColor(126,32,commuteRainText(forecast,weather),264,kColorWhite);
-            assertIsolated({126,18,264,16});
+            if (forecastPage) {
+                canvas.fillScreen(kColorBlack);
+                drawAsciiText(316,17,currentTimeText(),2,kColorWhite);
+                assertIsolated({316,17,60,16});
+                canvas.fillScreen(kColorBlack);
+                drawTruncatedTextColor(142,29,weatherDisplayText(weather),166,kColorWhite);
+                assertIsolated({142,15,166,16});
+            } else {
+                canvas.fillScreen(kColorBlack);
+                drawAsciiText(316,1,currentTimeText(),2,kColorWhite);
+                assertIsolated({316,1,60,16});
+                canvas.fillScreen(kColorBlack);
+                drawTruncatedTextColor(126,32,commuteRainText(forecast,weather),264,kColorWhite);
+                assertIsolated({126,18,264,16});
+                if (snapshot.recommendation==transitink::CommuteChoice::RouteA2) {
+                    canvas.fillScreen(kColorBlack);
+                    drawTextColor(200,70,leaveHomeText(snapshot.routeA2.primary),kColorWhite);
+                    assertIsolated({200,56,100,16});
+                }
+            }
             std::copy(full.begin(),full.end(),frameBuffer);
         }
         std::ofstream out(std::filesystem::path(argv[1]) / name, std::ios::binary);
