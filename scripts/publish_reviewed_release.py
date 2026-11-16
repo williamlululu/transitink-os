@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only reviewed v1.3.1 bytes; never build firmware or attest a new build."""
+"""Publish only reviewed v1.3.2 bytes; never build firmware or attest a new build."""
 import hashlib
 import json
 import os
@@ -12,12 +12,12 @@ from verify_release_approval import verify_release
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "williamlululu/transitink-os"
-TAG = "v1.3.1"
-STAGING_TAG = "staging/v1.3.1-reviewed"
-CHECKPOINT = "87ef2e7d3d65fac594de5e8ada9e725865cd8e29"
-TREE = "7163e26123086af8e656a501f7f1970a647c73d7"
-SOURCE_NAME = "transitink-os-1.3.1-source.zip"
-SOURCE_SHA256 = "cc22c78fd79609538426ef6689093dac391902288d4e1dc91ed00e5ca336fc64"
+TAG = "v1.3.2"
+STAGING_TAG = "staging/v1.3.2-reviewed"
+CHECKPOINT = "5d2064fcda60ed684d8746b642e8bf2087634d87"
+TREE = "2e5d42cca9628fbf9313feb809085821cd417999"
+SOURCE_NAME = "transitink-os-1.3.2-source.zip"
+SOURCE_SHA256 = "0306ddeec611a27a57cbb3860e4a952f361df37fc7cad1734d7b9406e516ea58"
 LEGAL = ["LICENSE.txt", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_DATA.md", "CORRESPONDING_SOURCE.md"]
 
 
@@ -43,7 +43,7 @@ def main():
     require(os.environ.get("GH_REPO") == REPOSITORY, "Wrong publication repository")
     staging_id = os.environ.get("STAGING_RELEASE_ID", "")
     require(staging_id.isdigit(), "Staging release ID must be numeric")
-    approval_path = ROOT / "release/approved/v1.3.1.json"
+    approval_path = ROOT / "release/approved/v1.3.2.json"
     approval = json.loads(approval_path.read_text(encoding="utf-8"))
     require(approval["source_checkpoint"] == CHECKPOINT and approval["source_tree"] == TREE, "Wrong reviewed source identity")
     require(run("git", "rev-parse", f"{CHECKPOINT}^{{tree}}") == TREE, "Frozen source tree unavailable/mismatched")
@@ -80,7 +80,7 @@ def main():
         for info in archive.infolist():
             if info.is_dir():
                 continue
-            require(info.filename.startswith("transitink-os-1.3.1/") and ".." not in info.filename.split("/"), "Unsafe source entry")
+            require(info.filename.startswith("transitink-os-1.3.2/") and ".." not in info.filename.split("/"), "Unsafe source entry")
             name = info.filename.split("/", 1)[1]
             require(name not in actual, "Duplicate source entry")
             raw = archive.read(info)
@@ -100,7 +100,7 @@ def main():
     subprocess.run(["git", "tag", TAG, CHECKPOINT], cwd=ROOT, check=True)
     subprocess.run(["git", "push", "origin", f"refs/tags/{TAG}"], cwd=ROOT, check=True)
     subprocess.run(["gh", "release", "create", TAG, "--repo", REPOSITORY, "--verify-tag",
-                    "--title", "TransitInk OS v1.3.1", "--notes-file", str(ROOT / "release/notes/v1.3.1.md"),
+                    "--title", "TransitInk OS v1.3.2", "--notes-file", str(ROOT / "release/notes/v1.3.2.md"),
                     "--latest"] + [str(download / name) for name in sorted(expected)], cwd=ROOT, check=True)
     print(json.dumps({"published": TAG, "firmware_source_checkpoint": CHECKPOINT,
         "firmware_source_tree": TREE, "publication_commit": run("git", "rev-parse", "HEAD"),

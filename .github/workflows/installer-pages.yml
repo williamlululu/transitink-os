@@ -84,7 +84,25 @@ jobs:
         run: |
           python3 -m pip install -r requirements-context.txt
           python3 scripts/build_commute_context.py --output dist/installer/commute-context.json
-          python3 scripts/validate_context_publication.py dist/installer/commute-context.json
+          validation_args=()
+          if [[ "$RELEASE_TAG" == v1.3.2 ]]; then
+            validation_args+=(--require-alternate)
+          fi
+          python3 scripts/validate_context_publication.py dist/installer/commute-context.json "${validation_args[@]}"
+
+      - name: Verify the generated context with the frozen C++ parser
+        if: env.RELEASE_TAG == 'v1.3.2'
+        run: |
+          dependency="$RUNNER_TEMP/arduinojson"
+          mkdir "$dependency"
+          curl --fail --silent --show-error --location --retry 2 \
+            https://codeload.github.com/bblanchon/ArduinoJson/tar.gz/0b03321ed33fa6965114424fbb023260120c856b \
+            --output "$dependency/source.tar.gz"
+          tar -xzf "$dependency/source.tar.gz" --strip-components=1 -C "$dependency"
+          c++ -std=c++17 -Wall -Wextra -Werror -Iinclude -I"$dependency/src" \
+            test_host/test_commute_context_json.cpp -o "$RUNNER_TEMP/transitink-context-verify"
+          "$RUNNER_TEMP/transitink-context-verify" dist/installer/commute-context.json
+          sha256sum dist/installer/commute-context.json
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
